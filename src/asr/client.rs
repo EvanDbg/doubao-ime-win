@@ -4,7 +4,6 @@
 
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -35,15 +34,6 @@ impl AsrClient {
             "{}?aid={}&device_id={}",
             WEBSOCKET_URL, AID, self.credentials.device_id
         )
-    }
-
-    /// Get WebSocket headers
-    fn headers(&self) -> Vec<(&'static str, String)> {
-        vec![
-            ("User-Agent", USER_AGENT.to_string()),
-            ("proto-version", "v2".to_string()),
-            ("x-custom-keepalive", "true".to_string()),
-        ]
     }
 
     /// Start real-time ASR session

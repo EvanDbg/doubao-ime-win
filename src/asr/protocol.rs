@@ -3,7 +3,7 @@
 //! Handles building and parsing ASR protocol messages.
 
 use prost::Message;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use super::proto::{AsrRequest, AsrResponse as AsrResponseProto, FrameState};

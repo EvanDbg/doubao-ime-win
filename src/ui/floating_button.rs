@@ -128,13 +128,11 @@ impl FloatingButton {
         use std::mem::size_of;
         use windows::core::w;
         use windows::Win32::Foundation::*;
-        use windows::Win32::Graphics::Gdi::*;
+        
         use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-        use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+        
         use windows::Win32::UI::WindowsAndMessaging::*;
 
-        const DRAG_TIMER_ID: usize = 1;
-        const BUTTON_RADIUS: i32 = 22;
 
         // Thread-local state
         static MOUSE_DOWN: AtomicBool = AtomicBool::new(false);
@@ -180,7 +178,7 @@ impl FloatingButton {
                 let hdc_mem = CreateCompatibleDC(hdc_screen);
 
                 // Create 32-bit bitmap
-                let mut bmi = BITMAPINFO {
+                let bmi = BITMAPINFO {
                     bmiHeader: BITMAPINFOHEADER {
                         biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
                         biWidth: img_w as i32,
@@ -278,7 +276,6 @@ impl FloatingButton {
             const WM_LBUTTONUP: u32 = 0x0202;
             const WM_RBUTTONUP: u32 = 0x0205;
             const DRAG_TIMER_ID: usize = 1;
-            const BUTTON_RADIUS: i32 = 22;
 
             match msg {
                 WM_CREATE => {
