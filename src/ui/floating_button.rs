@@ -157,6 +157,113 @@ impl FloatingButton {
         SHARED_STATE.with(|s| *s.borrow_mut() = Some(state));
         EVENT_SENDER.with(|s| *s.borrow_mut() = Some(event_tx));
 
+        // Helper function to update layered window with PNG icon
+        unsafe fn update_layered_icon(hwnd: HWND, state_val: u8) {
+            use windows::Win32::Foundation::*;
+            use windows::Win32::Graphics::Gdi::*;
+            use windows::Win32::UI::WindowsAndMessaging::*;
+
+            // Load embedded PNG icon based on state
+            let icon_data: &[u8] = match state_val {
+                1 => include_bytes!("../../assets/icon_recording.png"),
+                2 => include_bytes!("../../assets/icon_processing.png"),
+                _ => include_bytes!("../../assets/icon_idle.png"),
+            };
+
+            // Decode PNG
+            if let Ok(img) = image::load_from_memory(icon_data) {
+                let rgba = img.to_rgba8();
+                let (img_w, img_h) = rgba.dimensions();
+
+                // Get screen DC
+                let hdc_screen = GetDC(HWND::default());
+                let hdc_mem = CreateCompatibleDC(hdc_screen);
+
+                // Create 32-bit bitmap
+                let mut bmi = BITMAPINFO {
+                    bmiHeader: BITMAPINFOHEADER {
+                        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                        biWidth: img_w as i32,
+                        biHeight: -(img_h as i32), // Top-down
+                        biPlanes: 1,
+                        biBitCount: 32,
+                        biCompression: 0, // BI_RGB
+                        biSizeImage: 0,
+                        biXPelsPerMeter: 0,
+                        biYPelsPerMeter: 0,
+                        biClrUsed: 0,
+                        biClrImportant: 0,
+                    },
+                    bmiColors: [RGBQUAD::default()],
+                };
+
+                let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+                if let Ok(hbmp) = CreateDIBSection(
+                    hdc_mem,
+                    &bmi,
+                    DIB_RGB_COLORS,
+                    &mut bits,
+                    None,
+                    0,
+                ) {
+                    if !bits.is_null() {
+                        let old_bmp = SelectObject(hdc_mem, hbmp);
+
+                        // Copy pixels with premultiplied alpha (required for UpdateLayeredWindow)
+                        let pixel_data = bits as *mut u8;
+                        let mut idx = 0usize;
+                        for pixel in rgba.pixels() {
+                            let r = pixel[0] as u32;
+                            let g = pixel[1] as u32;
+                            let b = pixel[2] as u32;
+                            let a = pixel[3] as u32;
+
+                            // Premultiply alpha
+                            let pr = ((r * a) / 255) as u8;
+                            let pg = ((g * a) / 255) as u8;
+                            let pb = ((b * a) / 255) as u8;
+
+                            *pixel_data.add(idx) = pb;     // B
+                            *pixel_data.add(idx + 1) = pg; // G
+                            *pixel_data.add(idx + 2) = pr; // R
+                            *pixel_data.add(idx + 3) = pixel[3]; // A
+                            idx += 4;
+                        }
+
+                        // Setup blend function for per-pixel alpha
+                        let blend = BLENDFUNCTION {
+                            BlendOp: 0, // AC_SRC_OVER
+                            BlendFlags: 0,
+                            SourceConstantAlpha: 255,
+                            AlphaFormat: 1, // AC_SRC_ALPHA
+                        };
+
+                        let size = SIZE { cx: img_w as i32, cy: img_h as i32 };
+                        let pt_src = POINT { x: 0, y: 0 };
+
+                        // Update layered window
+                        let _ = UpdateLayeredWindow(
+                            hwnd,
+                            hdc_screen,
+                            None,
+                            Some(&size),
+                            hdc_mem,
+                            Some(&pt_src),
+                            COLORREF(0),
+                            Some(&blend),
+                            ULW_ALPHA,
+                        );
+
+                        SelectObject(hdc_mem, old_bmp);
+                        let _ = DeleteObject(hbmp);
+                    }
+                }
+
+                let _ = DeleteDC(hdc_mem);
+                let _ = ReleaseDC(HWND::default(), hdc_screen);
+            }
+        }
+
         unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             use windows::Win32::Foundation::*;
             use windows::Win32::Graphics::Gdi::*;
@@ -175,122 +282,18 @@ impl FloatingButton {
 
             match msg {
                 WM_CREATE => {
-                    let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0x00FF00), 0, LWA_COLORKEY);
+                    // Use UpdateLayeredWindow for per-pixel alpha, initial update
+                    update_layered_icon(hwnd, 0);
                     LRESULT(0)
                 }
                 WM_PAINT => {
                     let mut ps = PAINTSTRUCT::default();
-                    let hdc = BeginPaint(hwnd, &mut ps);
-
-                    // Get window size
-                    let mut rect = RECT::default();
-                    let _ = GetClientRect(hwnd, &mut rect);
-                    let window_size = rect.right;
-                    let center = window_size / 2;
-
-                    // Green background (transparent)
-                    let bg = CreateSolidBrush(COLORREF(0x00FF00));
-                    FillRect(hdc, &rect, bg);
-                    let _ = DeleteObject(bg);
-
-                    // Get state
+                    let _ = BeginPaint(hwnd, &mut ps);
+                    // Get current state and update layered window
                     let state_val = SHARED_STATE.with(|s| {
                         s.borrow().as_ref().map(|st| st.load(Ordering::SeqCst)).unwrap_or(0)
                     });
-
-                    // Color based on state - modern gradient colors matching tray icon
-                    let (inner_color, outer_color) = match state_val {
-                        1 => (COLORREF(0x5555EF), COLORREF(0x3535BF)), // Red for recording
-                        2 => (COLORREF(0xF68230), COLORREF(0xC66020)), // Orange for processing
-                        _ => (COLORREF(0xF65C8B), COLORREF(0xC64868)), // Purple/pink for idle
-                    };
-
-                    // Draw outer circle (shadow/border)
-                    let outer_brush = CreateSolidBrush(outer_color);
-                    let outer_pen = CreatePen(PS_NULL, 0, COLORREF(0));
-                    let ob1 = SelectObject(hdc, outer_brush);
-                    let op1 = SelectObject(hdc, outer_pen);
-                    let _ = Ellipse(hdc, center - BUTTON_RADIUS - 2, center - BUTTON_RADIUS - 2,
-                                   center + BUTTON_RADIUS + 2, center + BUTTON_RADIUS + 2);
-                    SelectObject(hdc, ob1);
-                    SelectObject(hdc, op1);
-                    let _ = DeleteObject(outer_brush);
-                    let _ = DeleteObject(outer_pen);
-
-                    // Draw inner circle
-                    let inner_brush = CreateSolidBrush(inner_color);
-                    let white_pen = CreatePen(PS_SOLID, 2, COLORREF(0xFFFFFF));
-                    let ob2 = SelectObject(hdc, inner_brush);
-                    let op2 = SelectObject(hdc, white_pen);
-                    let _ = Ellipse(hdc, center - BUTTON_RADIUS, center - BUTTON_RADIUS,
-                                   center + BUTTON_RADIUS, center + BUTTON_RADIUS);
-                    SelectObject(hdc, ob2);
-                    SelectObject(hdc, op2);
-                    let _ = DeleteObject(inner_brush);
-                    let _ = DeleteObject(white_pen);
-
-                    // Draw icon based on state with modern design
-                    let icon_color = COLORREF(0xFFFFFF);
-                    let icon_brush = CreateSolidBrush(icon_color);
-                    let icon_pen = CreatePen(PS_SOLID, 3, icon_color);
-                    let ob3 = SelectObject(hdc, icon_brush);
-                    let op3 = SelectObject(hdc, icon_pen);
-
-                    match state_val {
-                        1 => {
-                            // Recording: draw rounded stop square with border
-                            let sq = 8;
-                            let _ = RoundRect(hdc, center - sq, center - sq,
-                                            center + sq, center + sq, 4, 4);
-                        }
-                        2 => {
-                            // Processing: draw three animated-style dots
-                            let dot_r = 4;
-                            let spacing = 10;
-                            // Left dot
-                            let _ = Ellipse(hdc, center - spacing - dot_r, center - dot_r + 2,
-                                          center - spacing + dot_r, center + dot_r + 2);
-                            // Center dot (slightly higher for wave effect)
-                            let _ = Ellipse(hdc, center - dot_r, center - dot_r - 2,
-                                          center + dot_r, center + dot_r - 2);
-                            // Right dot
-                            let _ = Ellipse(hdc, center + spacing - dot_r, center - dot_r + 2,
-                                          center + spacing + dot_r, center + dot_r + 2);
-                        }
-                        _ => {
-                            // Idle: draw modern microphone icon
-                            // Mic head (pill shape)
-                            let _ = RoundRect(hdc, center - 5, center - 10,
-                                            center + 5, center + 2, 6, 6);
-                            // Mic arc (using lines for C-shape)
-                            let arc_pen = CreatePen(PS_SOLID, 2, icon_color);
-                            let op_arc = SelectObject(hdc, arc_pen);
-                            // Left arc
-                            let _ = MoveToEx(hdc, center - 8, center - 2, None);
-                            let _ = LineTo(hdc, center - 8, center + 4);
-                            // Bottom curve (approximated with lines)
-                            let _ = LineTo(hdc, center - 6, center + 7);
-                            let _ = LineTo(hdc, center, center + 8);
-                            let _ = LineTo(hdc, center + 6, center + 7);
-                            let _ = LineTo(hdc, center + 8, center + 4);
-                            // Right arc
-                            let _ = LineTo(hdc, center + 8, center - 2);
-                            // Stem
-                            let _ = MoveToEx(hdc, center, center + 8, None);
-                            let _ = LineTo(hdc, center, center + 12);
-                            // Base
-                            let _ = MoveToEx(hdc, center - 5, center + 12, None);
-                            let _ = LineTo(hdc, center + 5, center + 12);
-                            SelectObject(hdc, op_arc);
-                            let _ = DeleteObject(arc_pen);
-                        }
-                    }
-
-                    SelectObject(hdc, ob3);
-                    SelectObject(hdc, op3);
-                    let _ = DeleteObject(icon_brush);
-                    let _ = DeleteObject(icon_pen);
-
+                    update_layered_icon(hwnd, state_val);
                     EndPaint(hwnd, &ps);
                     LRESULT(0)
                 }
