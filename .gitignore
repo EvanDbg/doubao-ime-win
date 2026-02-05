@@ -1,0 +1,28 @@
+# Generated files
+/target/
+/dist/
+
+# Cargo lock (optional for applications)
+# Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+*.exe
+*.dll
+*.pdb
+
+# Configuration with secrets
+credentials.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/

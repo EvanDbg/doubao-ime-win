@@ -1,0 +1,93 @@
+[package]
+name = "doubao-voice-input"
+version = "1.0.0"
+edition = "2021"
+authors = ["Doubao Voice Input Team"]
+description = "Windows voice input tool using Doubao ASR"
+license = "MIT"
+repository = "https://github.com/yourusername/doubao-ime-win"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# HTTP client for device registration
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+
+# WebSocket client
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+futures-util = "0.3"
+
+# Audio capture
+cpal = "0.15"
+
+# Opus encoding (with pre-built binaries)
+opus = "0.3"
+
+# Protobuf
+prost = "0.12"
+
+# Global hotkey
+global-hotkey = "0.5"
+
+# System tray
+tray-icon = "0.14"
+
+# Windows API
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Security_Cryptography",
+    "Win32_System_DataExchange",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Gdi",
+] }
+
+# Configuration
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# UUID
+uuid = { version = "1.6", features = ["v4"] }
+
+# Random number generation
+rand = "0.8"
+
+# Hex encoding
+hex = "0.4"
+
+# MD5 hashing (for x-ss-stub header)
+md5 = "0.7"
+
+# Crypto (for DPAPI alternative - simple encryption)
+ring = "0.17"
+base64 = "0.21"
+
+# Image for tray icon
+image = "0.24"
+
+[build-dependencies]
+prost-build = "0.12"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[[bin]]
+name = "doubao-voice-input"
+path = "src/main.rs"

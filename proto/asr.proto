@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package asr;
+
+// ASR WebSocket 请求消息
+message AsrRequest {
+    // 认证 token (从 Settings API 获取的 app_key)
+    string token = 2;
+
+    // 服务名称，固定为 "ASR"
+    string service_name = 3;
+
+    // 方法名称
+    // - "StartTask": 启动任务
+    // - "StartSession": 启动会话
+    // - "FinishSession": 结束会话
+    // - "TaskRequest": 发送音频数据
+    string method_name = 5;
+
+    // JSON 格式的负载数据
+    string payload = 6;
+
+    // 音频数据 (仅 TaskRequest 使用)
+    bytes audio_data = 7;
+
+    // 请求 ID (UUID)
+    string request_id = 8;
+
+    // 帧状态 (仅 TaskRequest 使用)
+    FrameState frame_state = 9;
+}
+
+// ASR WebSocket 响应消息
+message AsrResponse {
+    // 请求 ID
+    string request_id = 1;
+
+    // 任务 ID
+    string task_id = 2;
+
+    // 服务名称
+    string service_name = 3;
+
+    // 消息类型
+    string message_type = 4;
+
+    // 状态码
+    int32 status_code = 5;
+
+    // 状态消息
+    string status_message = 6;
+
+    // JSON 格式的识别结果
+    string result_json = 7;
+
+    // 未知字段
+    int32 unknown_field_9 = 9;
+}
+
+// 音频帧状态枚举
+enum FrameState {
+    FRAME_STATE_UNSPECIFIED = 0;
+    FRAME_STATE_FIRST = 1;
+    FRAME_STATE_MIDDLE = 3;
+    FRAME_STATE_LAST = 9;
+}

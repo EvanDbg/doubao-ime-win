@@ -1,0 +1,29 @@
+# Doubao Voice Input - Configuration File
+# 豆包语音输入配置文件
+
+[general]
+# 开机自启动
+auto_start = false
+# 语言
+language = "zh-CN"
+
+[hotkey]
+# 热键模式: "combo" (组合键) 或 "double_tap" (双击)
+mode = "double_tap"
+# 组合键 (当 mode = "combo" 时生效)
+combo_key = "Ctrl+Shift+V"
+# 双击键 (当 mode = "double_tap" 时生效)
+double_tap_key = "Ctrl"
+# 双击间隔 (毫秒)
+double_tap_interval = 300
+
+[floating_button]
+# 是否显示悬浮按钮
+enabled = true
+# 悬浮按钮位置 (像素)
+position_x = 100
+position_y = 100
+
+[asr]
+# 是否启用 VAD (语音活动检测)
+vad_enabled = true
