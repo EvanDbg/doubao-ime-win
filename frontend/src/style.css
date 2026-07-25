@@ -11,5 +11,5 @@
 .hud-top{justify-content:flex-start}
 .hud-top b{display:flex;align-items:center}
 .wave{height:46px;margin:12px 0 0}
-[data-hotkey-type][hidden],[data-trigger-mode][hidden]{display:none}
+[data-hotkey-action][hidden],[data-hotkey-type][hidden],[data-trigger-mode][hidden]{display:none}
 @media(max-width:760px){.shell{width:100vw;grid-template-rows:38px auto auto}.settings-main{max-height:calc(100vh - 38px);padding:20px 16px 28px}}

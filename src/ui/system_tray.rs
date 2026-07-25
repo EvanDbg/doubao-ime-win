@@ -25,7 +25,10 @@ use wry::{http::Response, PageLoadEvent, WebContext, WebView, WebViewBuilder};
 
 use crate::{
     audio::AudioCapture,
-    business::{HotkeyEvent, HotkeyManager, RawKeyBinding, VoiceController},
+    business::{
+        invoke_official_doubao, HotkeyEvent, HotkeyManager, OfficialDoubaoAction, RawKeyBinding,
+        VoiceController,
+    },
     cloud::{test_custom_llm, RichChatClient},
     data::{AppConfig, CloudConfig},
 };
@@ -45,6 +48,7 @@ enum VoiceState {
 enum UserEvent {
     Ipc(Box<IpcCommand>),
     Hotkey(HotkeyEvent),
+    OfficialDoubao(OfficialDoubaoAction),
     Start,
     Stop,
     SetState(VoiceState),
@@ -152,8 +156,15 @@ pub fn run_app(
         .build()?;
 
     let hotkey_proxy = proxy.clone();
+    let hotkey_action = hotkey_manager.clone();
     hotkey_manager.on_event(move |event| {
-        let _ = hotkey_proxy.send_event(UserEvent::Hotkey(event));
+        if hotkey_action.invokes_official_doubao() {
+            if let Some(action) = hotkey_action.official_doubao_action(event) {
+                let _ = hotkey_proxy.send_event(UserEvent::OfficialDoubao(action));
+            }
+        } else {
+            let _ = hotkey_proxy.send_event(UserEvent::Hotkey(event));
+        }
     });
 
     let settings_id_window = settings_window.id();
@@ -176,6 +187,11 @@ pub fn run_app(
                 }
                 UserEvent::Hotkey(HotkeyEvent::Stop) => {
                     let _ = proxy.send_event(UserEvent::Stop);
+                }
+                UserEvent::OfficialDoubao(action) => {
+                    if let Err(error) = invoke_official_doubao(action) {
+                        tracing::error!("Unable to invoke the official Doubao input method: {error:#}");
+                    }
                 }
                 UserEvent::Start => start_recording(voice_controller.clone(), runtime.clone(), proxy.clone()),
                 UserEvent::Stop => stop_recording(voice_controller.clone(), runtime.clone(), proxy.clone()),

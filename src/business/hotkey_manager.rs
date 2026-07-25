@@ -39,6 +39,12 @@ enum TriggerMode {
 
 impl TriggerMode {
     fn from_config(config: &HotkeyConfig) -> Self {
+        if config.action.eq_ignore_ascii_case("official_hold") {
+            return Self::Hold;
+        }
+        if config.action.eq_ignore_ascii_case("official_hands_free") {
+            return Self::SingleTap;
+        }
         match config.mode.to_ascii_lowercase().as_str() {
             "double_tap" => Self::DoubleTap,
             "hold" => Self::Hold,
@@ -55,6 +61,14 @@ pub struct RawKeyBinding {
     pub vk_code: u32,
     pub scan_code: u32,
     pub extended: bool,
+}
+
+/// Key injection requested for one of the official Doubao input modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfficialDoubaoAction {
+    HoldStart,
+    HoldStop,
+    HandsFree,
 }
 
 /// Hotkey manager for global hotkey handling.
@@ -155,6 +169,28 @@ impl HotkeyManager {
 
         tracing::info!("Hotkey configuration applied immediately");
         Ok(())
+    }
+
+    /// Whether the configured key should invoke the official Doubao input
+    /// method instead of this application's recording pipeline.
+    pub fn invokes_official_doubao(&self) -> bool {
+        self.config
+            .read()
+            .map(|config| {
+                matches!(
+                    config.action.to_ascii_lowercase().as_str(),
+                    "official_hold" | "official_hands_free"
+                )
+            })
+            .unwrap_or(false)
+    }
+
+    /// Resolve a physical hotkey event to the corresponding official action.
+    pub fn official_doubao_action(&self, event: HotkeyEvent) -> Option<OfficialDoubaoAction> {
+        self.config
+            .read()
+            .ok()
+            .and_then(|config| official_doubao_action(&config, event))
     }
 
     /// Set a callback for hotkey events.
@@ -312,6 +348,19 @@ impl HotkeyManager {
 
 fn validate_config(config: &HotkeyConfig) -> Result<()> {
     if !matches!(
+        config.action.to_ascii_lowercase().as_str(),
+        "voice_input" | "official_hold" | "official_hands_free"
+    ) {
+        return Err(anyhow!("Unsupported hotkey action: {}", config.action));
+    }
+    if !config.action.eq_ignore_ascii_case("voice_input")
+        && !config.binding.eq_ignore_ascii_case("raw")
+    {
+        return Err(anyhow!(
+            "Official Doubao actions require a raw custom-key binding"
+        ));
+    }
+    if !matches!(
         config.mode.to_ascii_lowercase().as_str(),
         "combo" | "single_tap" | "double_tap" | "hold"
     ) {
@@ -326,6 +375,77 @@ fn validate_config(config: &HotkeyConfig) -> Result<()> {
         let _ = configured_standard_hotkey(config)?;
         Ok(())
     }
+}
+
+fn official_doubao_action(
+    config: &HotkeyConfig,
+    event: HotkeyEvent,
+) -> Option<OfficialDoubaoAction> {
+    match (config.action.to_ascii_lowercase().as_str(), event) {
+        ("official_hold", HotkeyEvent::Start) => Some(OfficialDoubaoAction::HoldStart),
+        ("official_hold", HotkeyEvent::Stop) => Some(OfficialDoubaoAction::HoldStop),
+        ("official_hands_free", HotkeyEvent::Toggle) => Some(OfficialDoubaoAction::HandsFree),
+        _ => None,
+    }
+}
+
+/// Inject the shortcut for an official Doubao input mode.
+#[cfg(target_os = "windows")]
+pub fn invoke_official_doubao(action: OfficialDoubaoAction) -> Result<()> {
+    use std::mem::size_of;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VK_LCONTROL, VK_LWIN, VK_RMENU,
+    };
+
+    fn key_input(
+        key: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY,
+        key_up: bool,
+    ) -> INPUT {
+        let mut flags: KEYBD_EVENT_FLAGS = Default::default();
+        if key == VK_LWIN || key == VK_RMENU {
+            flags |= KEYEVENTF_EXTENDEDKEY;
+        }
+        if key_up {
+            flags |= KEYEVENTF_KEYUP;
+        }
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: key,
+                    dwFlags: flags,
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
+    let inputs = match action {
+        OfficialDoubaoAction::HoldStart => vec![key_input(VK_RMENU, false)],
+        OfficialDoubaoAction::HoldStop => vec![key_input(VK_RMENU, true)],
+        OfficialDoubaoAction::HandsFree => vec![
+            key_input(VK_LCONTROL, false),
+            key_input(VK_LWIN, false),
+            key_input(VK_LWIN, true),
+            key_input(VK_LCONTROL, true),
+        ],
+    };
+    let sent = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        return Err(anyhow!(
+            "SendInput sent {sent} of {} events for the official Doubao action",
+            inputs.len()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn invoke_official_doubao(_action: OfficialDoubaoAction) -> Result<()> {
+    Err(anyhow!(
+        "The official Doubao input method shortcut is only available on Windows"
+    ))
 }
 
 fn configured_standard_hotkey(config: &HotkeyConfig) -> Result<Option<HotKey>> {
@@ -736,4 +856,47 @@ fn parse_key_code(key: &str) -> Result<Code> {
         _ => return Err(anyhow!("Unknown key: {}", key)),
     };
     Ok(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn official_action_routes_press_events_but_not_hold_release() {
+        let mut config = HotkeyConfig::default();
+        config.action = "official_hands_free".to_string();
+
+        assert_eq!(TriggerMode::from_config(&config), TriggerMode::SingleTap);
+        assert_eq!(
+            official_doubao_action(&config, HotkeyEvent::Toggle),
+            Some(OfficialDoubaoAction::HandsFree)
+        );
+        assert_eq!(official_doubao_action(&config, HotkeyEvent::Stop), None);
+    }
+
+    #[test]
+    fn voice_input_action_keeps_all_events_in_the_local_pipeline() {
+        let config = HotkeyConfig::default();
+
+        assert_eq!(official_doubao_action(&config, HotkeyEvent::Toggle), None);
+        assert_eq!(official_doubao_action(&config, HotkeyEvent::Start), None);
+        assert_eq!(official_doubao_action(&config, HotkeyEvent::Stop), None);
+    }
+
+    #[test]
+    fn official_hold_routes_raw_press_and_release() {
+        let mut config = HotkeyConfig::default();
+        config.action = "official_hold".to_string();
+
+        assert_eq!(TriggerMode::from_config(&config), TriggerMode::Hold);
+        assert_eq!(
+            official_doubao_action(&config, HotkeyEvent::Start),
+            Some(OfficialDoubaoAction::HoldStart)
+        );
+        assert_eq!(
+            official_doubao_action(&config, HotkeyEvent::Stop),
+            Some(OfficialDoubaoAction::HoldStop)
+        );
+    }
 }

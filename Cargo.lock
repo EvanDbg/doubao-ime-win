@@ -733,7 +733,7 @@ dependencies = [
 
 [[package]]
 name = "doubao-voice-input"
-version = "1.2.17"
+version = "1.2.18"
 dependencies = [
  "anyhow",
  "chrono",

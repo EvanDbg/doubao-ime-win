@@ -90,6 +90,10 @@ impl Default for GeneralConfig {
 /// Hotkey configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HotkeyConfig {
+    /// Action invoked by the configured key: this application's voice input
+    /// or the official Doubao input method shortcut.
+    #[serde(default = "default_hotkey_action")]
+    pub action: String,
     /// Active binding source: `standard` uses the existing global-hotkey
     /// implementation, while `raw` listens to a Windows keyboard event.
     #[serde(default = "default_hotkey_binding")]
@@ -119,6 +123,10 @@ fn default_hotkey_binding() -> String {
     "standard".to_string()
 }
 
+fn default_hotkey_action() -> String {
+    "voice_input".to_string()
+}
+
 fn default_hotkey_mode() -> String {
     "combo".to_string()
 }
@@ -138,6 +146,7 @@ fn default_double_tap_interval() -> u64 {
 impl Default for HotkeyConfig {
     fn default() -> Self {
         Self {
+            action: default_hotkey_action(),
             binding: default_hotkey_binding(),
             mode: default_hotkey_mode(),
             combo_key: default_combo_key(),
@@ -305,6 +314,28 @@ impl CloudConfig {
 
 fn default_llm_thinking_mode() -> String {
     "omit".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_hotkey_config_defaults_to_local_voice_input() {
+        let config: HotkeyConfig = toml::from_str("").expect("legacy hotkey config should load");
+
+        assert_eq!(config.action, "voice_input");
+    }
+
+    #[test]
+    fn hotkey_action_is_serialized() {
+        let mut config = HotkeyConfig::default();
+        config.action = "official_hands_free".to_string();
+
+        let serialized = toml::to_string(&config).expect("hotkey config should serialize");
+
+        assert!(serialized.contains("action = \"official_hands_free\""));
+    }
 }
 
 /// Audio format sent to the ASR service.

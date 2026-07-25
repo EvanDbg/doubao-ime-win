@@ -134,6 +134,7 @@ auto_start = false
 language = "zh-CN"
 
 [hotkey]
+action = "voice_input"  # "voice_input"、"official_hold" 或 "official_hands_free"
 binding = "standard"  # "standard" 或 "raw"
 mode = "double_tap"
 combo_key = "Ctrl+Shift+V"
@@ -142,6 +143,10 @@ double_tap_interval = 300  # 毫秒
 raw_vk_code = 0
 raw_scan_code = 0
 raw_extended = false
+
+# official_hold: 将录入的自定义按键按下/松开转发为官方右 Alt 长按模式
+# official_hands_free: 点按自定义按键时转发左 Ctrl+Win，之后由官方输入法接管
+# 两种官方模式均不启动本程序录音，也不显示本程序悬浮窗口
 
 [floating_button]
 enabled = true
