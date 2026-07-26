@@ -628,11 +628,9 @@ fn run_raw_key_hook(
                         hook.pressed = Some(identity);
                         match mode {
                             TriggerMode::SingleTap => (hook.callback)(HotkeyEvent::Toggle),
-                            TriggerMode::DoubleTap => emit_double_tap_if_ready(
-                                hook,
-                                identity,
-                                config.double_tap_interval,
-                            ),
+                            TriggerMode::DoubleTap => {
+                                emit_double_tap_if_ready(hook, identity, config.double_tap_interval)
+                            }
                             TriggerMode::Hold => (hook.callback)(HotkeyEvent::Start),
                         }
                     }
@@ -687,11 +685,9 @@ fn run_raw_key_hook(
                         hook.pressed = Some(identity);
                         match mode {
                             TriggerMode::SingleTap => (hook.callback)(HotkeyEvent::Toggle),
-                            TriggerMode::DoubleTap => emit_double_tap_if_ready(
-                                hook,
-                                identity,
-                                config.double_tap_interval,
-                            ),
+                            TriggerMode::DoubleTap => {
+                                emit_double_tap_if_ready(hook, identity, config.double_tap_interval)
+                            }
                             TriggerMode::Hold => (hook.callback)(HotkeyEvent::Start),
                         }
                     }
