@@ -17,37 +17,12 @@ const isHud = new URLSearchParams(location.search).get("view") === "hud";
 let config: Config | null = null;
 let state: VoiceState = "idle";
 let meter = 0;
-let resizeFrame = 0;
-let lastSize = "";
-let settingsMaximized = false;
 let activeSettingsPage = "general";
 const post = (command: string, params: Record<string, unknown> = {}) => window.ipc?.postMessage(JSON.stringify({ command, params }));
 const esc = (value: unknown) => String(value ?? "").replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]!));
 const field = (id: string, label: string, value: unknown, type = "text") => `<label class="field"><span>${label}</span><input id="${id}" type="${type}" value="${esc(value)}" /></label>`;
 const toggle = (id: string, label: string, on: boolean, hint = "") => `<label class="toggle"><span><b>${label}</b>${hint && `<small>${hint}</small>`}</span><input id="${id}" type="checkbox" ${on ? "checked" : ""}/><i></i></label>`;
 const select = (id: string, label: string, value: string, options: [string, string][]) => `<label class="field"><span>${label}</span><select id="${id}">${options.map(([v, text]) => `<option value="${v}" ${v === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`;
-
-function scheduleResize() {
-  cancelAnimationFrame(resizeFrame);
-  resizeFrame = requestAnimationFrame(() => {
-    if (!isHud && settingsMaximized) return;
-    const target = document.querySelector<HTMLElement>(isHud ? "#hud" : ".shell");
-    if (!target) return;
-    const rect = target.getBoundingClientRect();
-    const width = Math.ceil(isHud ? rect.width : Math.max(target.scrollWidth, rect.width));
-    const contentBottom = isHud
-      ? rect.height
-      : Math.max(...Array.from(target.children, child => {
-        const node = child as HTMLElement;
-        return node.offsetTop + node.scrollHeight;
-      }));
-    const height = Math.ceil(contentBottom);
-    const size = `${width}x${height}`;
-    if (size === lastSize) return;
-    lastSize = size;
-    post(isHud ? "resize_hud" : "resize_settings", { width, height });
-  });
-}
 
 function showSettingsPage(page: string) {
   const button = Array.from(document.querySelectorAll<HTMLButtonElement>("nav [data-page]"))
@@ -60,7 +35,6 @@ function showSettingsPage(page: string) {
   section.classList.add("active");
   const title = document.querySelector<HTMLElement>("#page-title");
   if (title) title.textContent = button.textContent?.trim() || "设置";
-  scheduleResize();
 }
 
 function renderSettings() {
@@ -107,7 +81,6 @@ function renderSettings() {
     if (note) note.innerHTML = custom
       ? `<b>自定义兼容接口</b><small>请求将发送到下方地址，并使用你提供的密钥和模型。</small>`
       : `<b>内置豆包润色</b><small>使用已注册的本机设备凭据调用内置服务，无需接口密钥。</small>`;
-    scheduleResize();
   };
   const updatePolishMode = () => {
     const settings = document.querySelector<HTMLElement>("#polish-settings");
@@ -120,9 +93,8 @@ function renderSettings() {
   updatePolishMode();
   showSettingsPage(activeSettingsPage);
   post("get_settings_window_state");
-  scheduleResize();
 }
-function setCapture(message: string) { const node = document.querySelector("#capture-status"); if (node) node.textContent = message; scheduleResize(); }
+function setCapture(message: string) { const node = document.querySelector("#capture-status"); if (node) node.textContent = message; }
 function syncHotkeyFields() {
   const action = document.querySelector<HTMLSelectElement>("#hotkey_action")?.value || "voice_input";
   const typeSelect = document.querySelector<HTMLSelectElement>("#hotkey_type");
@@ -135,7 +107,6 @@ function syncHotkeyFields() {
     const modeMatches = !node.dataset.triggerMode || node.dataset.triggerMode === mode;
     node.hidden = !(actionMatches && typeMatches && modeMatches);
   });
-  scheduleResize();
 }
 function value(id: string) { return document.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`)!.value; }
 function enabled(id: string) { return document.querySelector<HTMLInputElement>(`#${id}`)!.checked; }
@@ -162,7 +133,6 @@ function testCustomLlm() {
   if (button) button.disabled = true;
   if (result) { result.textContent = "正在测试连接..."; result.className = "testing"; }
   post("test_custom_llm", { config: formCloudConfig() });
-  scheduleResize();
 }
 function save() {
   if (!config) return;
@@ -179,9 +149,7 @@ function renderHud() {
   app.innerHTML = `<div class="hud ${state}" id="hud"><div class="hud-top"><b><i>${recording ? "●" : "◌"}</i>${recording ? "正在聆听" : "正在处理"}</b></div><div class="wave">${Array.from({ length: 18 }, () => "<i></i>").join("")}</div></div>`;
   document.querySelector<HTMLElement>("#hud")?.addEventListener("mousedown", event => { if (event.button === 0) post("drag_hud"); });
   paintMeter();
-  scheduleResize();
 }
 function paintMeter() { document.querySelectorAll<HTMLElement>(".wave i").forEach((bar, index) => { const curve = 0.5 + Math.abs(8.5 - index) / 15; bar.style.height = `${5 + meter * 34 * curve}px`; }); }
-window.__doubaoEvent = event => { if (event.type === "config") { config = event.config as Config; renderSettings(); } if (event.type === "voice_state") { state = event.state as VoiceState; if (isHud) renderHud(); } if (event.type === "window_state") { const button = document.querySelector<HTMLButtonElement>("#maximize"); const maximized = Boolean(event.maximized); settingsMaximized = maximized; if (!maximized) { lastSize = ""; scheduleResize(); } if (button) { button.innerHTML = maximized ? "&#10064;" : "&#9633;"; button.title = maximized ? "还原" : "最大化"; button.setAttribute("aria-label", button.title); } } if (event.type === "meter") { meter = Number(event.value) || 0; if (isHud) paintMeter(); } if (event.type === "capture_result") { const binding = event.binding as { vk_code: number; scan_code: number; extended: boolean } | undefined; if (binding && config) { Object.assign(config.hotkey, { binding: "raw", raw_vk_code: binding.vk_code, raw_scan_code: binding.scan_code, raw_extended: binding.extended }); const kind = document.querySelector<HTMLSelectElement>("#hotkey_type"); if (kind) kind.value = "raw"; syncHotkeyFields(); } setCapture(String(event.message)); } if (event.type === "llm_test_result") { const button = document.querySelector<HTMLButtonElement>("#test-llm"); const result = document.querySelector<HTMLElement>("#llm-test-result"); if (button) button.disabled = false; if (result) { result.textContent = String(event.message); result.className = event.success ? "success" : "failure"; } scheduleResize(); } if (event.type === "error") alert(String(event.message)); };
-window.addEventListener("resize", scheduleResize);
+window.__doubaoEvent = event => { if (event.type === "config") { config = event.config as Config; renderSettings(); } if (event.type === "voice_state") { state = event.state as VoiceState; if (isHud) renderHud(); } if (event.type === "window_state") { const button = document.querySelector<HTMLButtonElement>("#maximize"); const maximized = Boolean(event.maximized); if (button) { button.innerHTML = maximized ? "&#10064;" : "&#9633;"; button.title = maximized ? "还原" : "最大化"; button.setAttribute("aria-label", button.title); } } if (event.type === "meter") { meter = Number(event.value) || 0; if (isHud) paintMeter(); } if (event.type === "capture_result") { const binding = event.binding as { vk_code: number; scan_code: number; extended: boolean } | undefined; if (binding && config) { Object.assign(config.hotkey, { binding: "raw", raw_vk_code: binding.vk_code, raw_scan_code: binding.scan_code, raw_extended: binding.extended }); const kind = document.querySelector<HTMLSelectElement>("#hotkey_type"); if (kind) kind.value = "raw"; syncHotkeyFields(); } setCapture(String(event.message)); } if (event.type === "llm_test_result") { const button = document.querySelector<HTMLButtonElement>("#test-llm"); const result = document.querySelector<HTMLElement>("#llm-test-result"); if (button) button.disabled = false; if (result) { result.textContent = String(event.message); result.className = event.success ? "success" : "failure"; } } if (event.type === "error") alert(String(event.message)); };
 if (isHud) { renderHud(); post("get_voice_state"); } else { renderSettings(); post("get_config"); }

@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use rust_embed::RustEmbed;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
     borrow::Cow,
     path::PathBuf,
@@ -57,12 +57,6 @@ enum UserEvent {
     DragHud,
 }
 
-#[derive(Clone, Copy, Deserialize)]
-struct WindowSizeRequest {
-    width: f64,
-    height: f64,
-}
-
 enum IpcCommand {
     GetConfig,
     SaveConfig(Box<AppConfig>),
@@ -78,8 +72,6 @@ enum IpcCommand {
     ToggleSettingsMaximize,
     HideSettings,
     DragHud,
-    ResizeSettings(WindowSizeRequest),
-    ResizeHud(WindowSizeRequest),
     TestCustomLlm(Box<CloudConfig>),
 }
 
@@ -106,7 +98,7 @@ pub fn run_app(
         .with_transparent(true)
         .with_always_on_top(true)
         .with_skip_taskbar(true)
-        .with_inner_size(LogicalSize::new(260.0, 96.0))
+        .with_inner_size(LogicalSize::new(280.0, 110.0))
         .with_position(tao::dpi::LogicalPosition::new(
             config.floating_button.position_x as f64,
             config.floating_button.position_y as f64,
@@ -178,7 +170,7 @@ pub fn run_app(
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16));
         match event {
             Event::UserEvent(command) => match command {
-                UserEvent::Ipc(command) => handle_ipc(*command, &settings_webview, &hud_webview, &settings_window, &proxy, &hotkey_manager, &runtime, voice_controller.clone(), &device_id, &mut state, &hud_window),
+                UserEvent::Ipc(command) => handle_ipc(*command, &settings_webview, &hud_webview, &settings_window, &proxy, &hotkey_manager, &runtime, voice_controller.clone(), &device_id, &mut state),
                 UserEvent::Hotkey(HotkeyEvent::Toggle) => {
                     if matches!(state, VoiceState::Recording) { let _ = proxy.send_event(UserEvent::Stop); } else { let _ = proxy.send_event(UserEvent::Start); }
                 }
@@ -250,7 +242,6 @@ fn handle_ipc(
     controller: Arc<Mutex<VoiceController>>,
     device_id: &str,
     state: &mut VoiceState,
-    hud_window: &Window,
 ) {
     match command {
         IpcCommand::GetConfig => match AppConfig::load_or_default().and_then(|mut config| {
@@ -339,14 +330,6 @@ fn handle_ipc(
         IpcCommand::DragHud => {
             let _ = proxy.send_event(UserEvent::DragHud);
         }
-        IpcCommand::ResizeSettings(size) => {
-            if !settings_window.is_maximized() {
-                resize_window(settings_window, size, LogicalSize::new(640.0, 420.0));
-            }
-        }
-        IpcCommand::ResizeHud(size) => {
-            resize_window(hud_window, size, LogicalSize::new(160.0, 56.0));
-        }
         IpcCommand::TestCustomLlm(config) => {
             let proxy = proxy.clone();
             runtime.spawn(async move {
@@ -358,33 +341,6 @@ fn handle_ipc(
             });
         }
     }
-}
-
-fn resize_window(window: &Window, requested: WindowSizeRequest, minimum: LogicalSize<f64>) {
-    if !requested.width.is_finite()
-        || !requested.height.is_finite()
-        || requested.width <= 0.0
-        || requested.height <= 0.0
-        || requested.width > 100_000.0
-        || requested.height > 100_000.0
-    {
-        return;
-    }
-    let maximum = window
-        .current_monitor()
-        .map(|monitor| {
-            let size = monitor.size().to_logical::<f64>(monitor.scale_factor());
-            LogicalSize::new(size.width * 0.9, size.height * 0.9)
-        })
-        .unwrap_or_else(|| LogicalSize::new(1_600.0, 900.0));
-    window.set_inner_size(LogicalSize::new(
-        requested
-            .width
-            .clamp(minimum.width, maximum.width.max(minimum.width)),
-        requested
-            .height
-            .clamp(minimum.height, maximum.height.max(minimum.height)),
-    ));
 }
 
 fn start_recording(
@@ -474,8 +430,6 @@ fn parse_ipc(message: &str) -> Result<IpcCommand> {
         Some("toggle_settings_maximize") => Ok(IpcCommand::ToggleSettingsMaximize),
         Some("hide_settings") => Ok(IpcCommand::HideSettings),
         Some("drag_hud") => Ok(IpcCommand::DragHud),
-        Some("resize_settings") => Ok(IpcCommand::ResizeSettings(parse_size_request(&value)?)),
-        Some("resize_hud") => Ok(IpcCommand::ResizeHud(parse_size_request(&value)?)),
         Some("test_custom_llm") => Ok(IpcCommand::TestCustomLlm(Box::new(serde_json::from_value(
             value
                 .get("params")
@@ -492,16 +446,6 @@ fn parse_ipc(message: &str) -> Result<IpcCommand> {
         )?))),
         _ => Err(anyhow!("unknown IPC command")),
     }
-}
-
-fn parse_size_request(value: &serde_json::Value) -> Result<WindowSizeRequest> {
-    serde_json::from_value(
-        value
-            .get("params")
-            .cloned()
-            .ok_or_else(|| anyhow!("resize command requires params"))?,
-    )
-    .map_err(Into::into)
 }
 
 fn logs_directory() -> PathBuf {
