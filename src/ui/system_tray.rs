@@ -432,10 +432,11 @@ fn build_webview(
     proxy: EventLoopProxy<UserEvent>,
     web_context: &mut WebContext,
 ) -> Result<WebView> {
+    let version = env!("CARGO_PKG_VERSION");
     let url = if hud {
-        "doubao://localhost/index.html?view=hud"
+        format!("doubao://localhost/index.html?view=hud&v={version}")
     } else {
-        "doubao://localhost/index.html"
+        format!("doubao://localhost/index.html?v={version}")
     };
     let view_name = if hud { "HUD" } else { "settings" };
     let builder = WebViewBuilder::new_with_web_context(web_context)
@@ -548,6 +549,7 @@ fn asset_response(path: &str) -> Response<Cow<'static, [u8]>> {
                 "content-type",
                 mime_guess::from_path(path).first_or_octet_stream().as_ref(),
             )
+            .header("cache-control", "no-store")
             .body(Cow::Owned(asset.data.into_owned()))
             .unwrap(),
         None => Response::builder()
