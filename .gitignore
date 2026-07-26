@@ -34,6 +34,7 @@
 
 # Security and machine-local deny rules always win.
 /config.toml
+/scripts/scan-git-history-secrets.ps1
 **/.env
 **/.env.*
 **/credentials.json
