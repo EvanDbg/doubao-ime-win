@@ -1,6 +1,9 @@
 //! Best-effort capture of the foreground edit context.
 
-const CONTEXT_CHAR_LIMIT: usize = 500;
+// The reference TSF implementation reads at most 0x80 UTF-16 characters on
+// either side of the caret. UI Automation is the cross-process equivalent
+// available to this standalone executable.
+const CONTEXT_CHAR_LIMIT: usize = 0x80;
 
 #[cfg(target_os = "windows")]
 const CONTEXT_CAPTURE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
@@ -28,7 +31,7 @@ pub struct ContextSnapshot {
     pub follows_below: String,
 }
 
-/// Capture the foreground target and up to 500 characters on either side of
+/// Capture the foreground target and up to 128 characters on either side of
 /// its caret. Unsupported controls and UI Automation errors return empty text.
 pub fn capture_context() -> ContextSnapshot {
     platform::capture_context()
@@ -147,17 +150,18 @@ mod platform {
         }
         let selection = selections.GetElement(0)?;
 
+        // Match ITfRange::Collapse(TF_ANCHOR_END): a non-empty selection is
+        // treated as a caret at its end for both surrounding ranges.
         let preceding_range: IUIAutomationTextRange = selection.Clone()?;
         preceding_range.MoveEndpointByRange(
-            TextPatternRangeEndpoint_End,
-            &selection,
             TextPatternRangeEndpoint_Start,
+            &selection,
+            TextPatternRangeEndpoint_End,
         )?;
-        preceding_range.Move(TextUnit_Character, -(CONTEXT_CHAR_LIMIT as i32))?;
-        preceding_range.MoveEndpointByRange(
-            TextPatternRangeEndpoint_End,
-            &selection,
+        preceding_range.MoveEndpointByUnit(
             TextPatternRangeEndpoint_Start,
+            TextUnit_Character,
+            -(CONTEXT_CHAR_LIMIT as i32),
         )?;
         let preceding = preceding_range
             .GetText(CONTEXT_CHAR_LIMIT as i32)?
@@ -187,6 +191,30 @@ mod platform {
         } else {
             Ok((String::new(), String::new()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{first_chars, last_chars, CONTEXT_CHAR_LIMIT};
+
+    #[test]
+    fn context_limit_matches_reference_implementation() {
+        assert_eq!(CONTEXT_CHAR_LIMIT, 0x80);
+    }
+
+    #[test]
+    fn context_truncation_preserves_unicode_character_boundaries() {
+        let value = format!("{}{}{}", "a".repeat(128), "\u{1f600}", "b".repeat(128));
+
+        assert_eq!(
+            first_chars(&value, 129),
+            format!("{}\u{1f600}", "a".repeat(128))
+        );
+        assert_eq!(
+            last_chars(&value, 129),
+            format!("\u{1f600}{}", "b".repeat(128))
+        );
     }
 }
 
