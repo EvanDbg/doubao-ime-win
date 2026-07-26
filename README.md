@@ -136,17 +136,20 @@ language = "zh-CN"
 [hotkey]
 action = "voice_input"  # "voice_input"、"official_hold" 或 "official_hands_free"
 binding = "standard"  # "standard" 或 "raw"
-mode = "double_tap"
-combo_key = "Ctrl+Shift+V"
-double_tap_key = "Ctrl"
-double_tap_interval = 300  # 毫秒
-raw_vk_code = 0
-raw_scan_code = 0
-raw_extended = false
+mode = "single_tap"  # "single_tap" (单击)、"double_tap" (双击) 或 "hold" (长按)
+standard_key = "Ctrl+Shift+V"  # 单键名或组合键
+double_tap_interval_ms = 300  # 双击间隔，100-1000 毫秒
+
+# 非标准按键由设置窗口“录入非标准按键”自动填写，仅 binding = "raw" 时存在：
+# [hotkey.raw_key]
+# vk_code = 255
+# scan_code = 114  # 省略表示匹配任意扫描码（如鼠标侧键）
+# extended = false
 
 # official_hold: 将录入的自定义按键按下/松开转发为官方右 Alt 长按模式
 # official_hands_free: 点按自定义按键时转发左 Ctrl+Win，之后由官方输入法接管
 # 两种官方模式均不启动本程序录音，也不显示本程序悬浮窗口
+# 旧版字段 (combo_key / double_tap_key / double_tap_interval / raw_vk_code 等) 首次启动自动迁移
 
 [floating_button]
 enabled = true

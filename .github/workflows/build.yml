@@ -94,6 +94,9 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --locked --all-targets
 
+      - name: Run tests
+        run: cargo test --locked
+
       - name: Build release executable
         shell: pwsh
         run: ./scripts/build-release.ps1

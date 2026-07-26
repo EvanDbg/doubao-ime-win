@@ -14,19 +14,21 @@ language = "zh-CN"
 action = "voice_input"
 # 绑定来源: "standard" (标准快捷键) 或 "raw" (Windows 非标准按键)
 binding = "standard"
-# 标准热键模式: "combo" (组合键) 或 "double_tap" (双击)
-mode = "combo"
-# 组合键 (当 mode = "combo" 时生效)
-combo_key = "Ctrl+Shift+V"
-# 双击键 (当 mode = "double_tap" 时生效)
-double_tap_key = "Ctrl"
-# 双击间隔 (毫秒)
-double_tap_interval = 300
-# 非标准按键由设置窗口“录入非标准按键”自动填写
-raw_vk_code = 0
-raw_scan_code = 0
-raw_extended = false
-# 非标准按键按下时切换录音状态
+# 触发方式: "single_tap" (单击)、"double_tap" (双击) 或 "hold" (长按)
+mode = "single_tap"
+# 标准触发按键：单键名 ("F13"、"Ctrl") 或组合键 ("Ctrl+Shift+V")
+standard_key = "Ctrl+Shift+V"
+# 双击间隔 (毫秒，100-1000)
+double_tap_interval_ms = 300
+
+# 非标准按键由设置窗口“录入非标准按键”自动填写；仅 binding = "raw" 时存在：
+# [hotkey.raw_key]
+# vk_code = 255
+# scan_code = 114    # 省略表示匹配任意扫描码（如鼠标侧键）
+# extended = false
+
+# 旧版字段 (combo_key / double_tap_key / double_tap_interval / raw_vk_code 等)
+# 在程序首次启动时自动迁移为上述新字段
 
 [floating_button]
 # 是否显示悬浮按钮

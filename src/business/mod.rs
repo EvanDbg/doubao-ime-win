@@ -6,6 +6,7 @@ mod context_capture;
 mod hotkey_manager;
 mod punctuation;
 mod text_inserter;
+mod trigger;
 mod voice_controller;
 mod voice_session;
 

@@ -20,8 +20,9 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use doubao_voice_input::{
-    init_crypto_provider, AppConfig, AsrClient, AudioCapture, CredentialStore, HotkeyManager,
-    NerClient, NerLexicon, RichChatClient, TextInserter, VoiceController, VoiceSessionStore,
+    init_crypto_provider, AppConfig, AsrClient, AudioCapture, CredentialStore, HotkeyConfig,
+    HotkeyManager, NerClient, NerLexicon, RichChatClient, TextInserter, VoiceController,
+    VoiceSessionStore,
 };
 
 #[tokio::main]
@@ -116,8 +117,19 @@ async fn run_ui_mode_inner() -> Result<()> {
         ),
     ));
 
-    // Initialize hotkey manager
-    let hotkey_manager = HotkeyManager::new(&config.hotkey)?;
+    // Initialize hotkey manager. A binding that fails to parse or register
+    // (for example because another program grabbed the shortcut) must not
+    // prevent startup: fall back to the default hotkey and tell the user.
+    let hotkey_manager = match HotkeyManager::new(&config.hotkey) {
+        Ok(manager) => manager,
+        Err(error) => {
+            warn!("Hotkey configuration is unusable, falling back to defaults: {error:#}");
+            show_nonfatal_warning(format!(
+                "热键配置无效：{error}\n\n已临时回退为默认热键 Ctrl+Shift+V，请在设置中重新配置。"
+            ));
+            HotkeyManager::new(&HotkeyConfig::default())?
+        }
+    };
     info!("Hotkey registered");
     info!("Startup initialization complete");
 
@@ -474,14 +486,37 @@ fn report_ui_mode_error(error: &anyhow::Error, logs: &Arc<StdMutex<String>>) {
 
 #[cfg(target_os = "windows")]
 fn show_windows_error_message(message: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::MB_ICONERROR;
+
+    show_windows_message_box("豆包语音输入启动失败", message, MB_ICONERROR.0);
+}
+
+/// Show a warning without blocking startup; the message box runs on its own
+/// thread so the event loop keeps initializing behind it.
+fn show_nonfatal_warning(message: String) {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::MB_ICONWARNING;
+
+        std::thread::spawn(move || {
+            show_windows_message_box("豆包语音输入", &message, MB_ICONWARNING.0);
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    eprintln!("Warning: {message}");
+}
+
+#[cfg(target_os = "windows")]
+fn show_windows_message_box(title: &str, message: &str, style: u32) {
     use windows::core::PCWSTR;
-    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_OK, MESSAGEBOX_STYLE};
 
     let message = message
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
-    let title = "豆包语音输入启动失败"
+    let title = title
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
@@ -491,7 +526,7 @@ fn show_windows_error_message(message: &str) {
             None,
             PCWSTR(message.as_ptr()),
             PCWSTR(title.as_ptr()),
-            MB_OK | MB_ICONERROR,
+            MB_OK | MESSAGEBOX_STYLE(style),
         );
     }
 }

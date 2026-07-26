@@ -193,7 +193,20 @@ pub fn run_app(
                     let hud_enabled = AppConfig::load_or_default().map(|config| config.floating_button.enabled).unwrap_or(false);
                     hud_window.set_visible(!matches!(state, VoiceState::Idle) && hud_enabled);
                 }
-                UserEvent::CaptureResult(result) => match result { Ok(binding) => send_event(&settings_webview, &serde_json::json!({"type":"capture_result", "message":format!("已录入：VK {} / 扫描码 {}", binding.vk_code, binding.scan_code), "binding":{"vk_code":binding.vk_code,"scan_code":binding.scan_code,"extended":binding.extended}})), Err(error) => send_event(&settings_webview, &serde_json::json!({"type":"capture_result", "message":format!("录入失败：{error}")})) },
+                UserEvent::CaptureResult(result) => match result {
+                    Ok(binding) => {
+                        // Mouse side buttons carry no scan code; store it as a
+                        // wildcard so any scan code matches.
+                        let scan_code = (binding.scan_code != 0).then_some(binding.scan_code);
+                        let scan_text = scan_code.map_or_else(|| "任意".to_string(), |scan| scan.to_string());
+                        send_event(&settings_webview, &serde_json::json!({
+                            "type": "capture_result",
+                            "message": format!("已录入：键码 {} / 扫描码 {}", binding.vk_code, scan_text),
+                            "raw_key": {"vk_code": binding.vk_code, "scan_code": scan_code, "extended": binding.extended},
+                        }));
+                    }
+                    Err(error) => send_event(&settings_webview, &serde_json::json!({"type":"capture_result", "message":format!("录入失败：{error}")})),
+                },
                 UserEvent::LlmTestResult { success, message } => send_event(&settings_webview, &serde_json::json!({"type":"llm_test_result", "success":success, "message":message})),
                 UserEvent::DragHud => { let _ = hud_window.drag_window(); }
             },
