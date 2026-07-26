@@ -176,12 +176,7 @@ impl HotkeyManager {
     pub fn invokes_official_doubao(&self) -> bool {
         self.config
             .read()
-            .map(|config| {
-                matches!(
-                    config.action.to_ascii_lowercase().as_str(),
-                    "official_hold" | "official_hands_free"
-                )
-            })
+            .map(|config| is_official_action(&config))
             .unwrap_or(false)
     }
 
@@ -353,9 +348,7 @@ fn validate_config(config: &HotkeyConfig) -> Result<()> {
     ) {
         return Err(anyhow!("Unsupported hotkey action: {}", config.action));
     }
-    if !config.action.eq_ignore_ascii_case("voice_input")
-        && !config.binding.eq_ignore_ascii_case("raw")
-    {
+    if is_official_action(config) && !config.binding.eq_ignore_ascii_case("raw") {
         return Err(anyhow!(
             "Official Doubao actions require a raw custom-key binding"
         ));
@@ -387,6 +380,23 @@ fn official_doubao_action(
         ("official_hands_free", HotkeyEvent::Toggle) => Some(OfficialDoubaoAction::HandsFree),
         _ => None,
     }
+}
+
+/// Whether the configured action forwards to the official Doubao input method.
+fn is_official_action(config: &HotkeyConfig) -> bool {
+    matches!(
+        config.action.to_ascii_lowercase().as_str(),
+        "official_hold" | "official_hands_free"
+    )
+}
+
+/// Whether a physical event identity matches the configured raw binding.
+#[cfg(target_os = "windows")]
+fn raw_binding_matches(config: &HotkeyConfig, identity: RawKeyBinding) -> bool {
+    config.binding.eq_ignore_ascii_case("raw")
+        && config.raw_vk_code == identity.vk_code
+        && (config.raw_scan_code == 0 || config.raw_scan_code == identity.scan_code)
+        && config.raw_extended == identity.extended
 }
 
 /// Inject the shortcut for an official Doubao input mode.
@@ -537,92 +547,101 @@ fn run_raw_key_hook(
             let keyboard = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
             let flags = keyboard.flags;
             if !flags.contains(LLKHF_INJECTED) {
-                HOOK_STATE.with(|state| {
-                    if let Some(ref mut hook) = *state.borrow_mut() {
-                        if !hook.is_active.load(Ordering::SeqCst) {
-                            return;
-                        }
+                let swallow = HOOK_STATE.with(|state| {
+                    let mut state = state.borrow_mut();
+                    let Some(hook) = state.as_mut() else {
+                        return false;
+                    };
+                    if !hook.is_active.load(Ordering::SeqCst) {
+                        return false;
+                    }
 
-                        let identity = RawKeyBinding {
-                            vk_code: keyboard.vkCode,
-                            scan_code: keyboard.scanCode,
-                            extended: flags.contains(LLKHF_EXTENDED),
-                        };
-                        let is_up = flags.contains(LLKHF_UP)
-                            || wparam.0 as u32 == 0x0101
-                            || wparam.0 as u32 == 0x0105;
+                    let identity = RawKeyBinding {
+                        vk_code: keyboard.vkCode,
+                        scan_code: keyboard.scanCode,
+                        extended: flags.contains(LLKHF_EXTENDED),
+                    };
+                    let is_up = flags.contains(LLKHF_UP)
+                        || wparam.0 as u32 == 0x0101
+                        || wparam.0 as u32 == 0x0105;
 
-                        if !is_up && deliver_capture(&hook.capture_sender, identity) {
-                            return;
-                        }
+                    if !is_up && deliver_capture(&hook.capture_sender, identity) {
+                        return false;
+                    }
 
-                        let config = match hook.config.read() {
-                            Ok(config) => config.clone(),
-                            Err(_) => return,
-                        };
-                        let raw_matches = config.binding.eq_ignore_ascii_case("raw")
-                            && config.raw_vk_code == identity.vk_code
-                            && (config.raw_scan_code == 0
-                                || config.raw_scan_code == identity.scan_code)
-                            && config.raw_extended == identity.extended;
-                        let modifier_matches = config.binding.eq_ignore_ascii_case("standard")
-                            && is_standard_modifier_binding(&config)
-                            && standard_modifier_matches(&config.double_tap_key, identity.vk_code);
-                        let mode = TriggerMode::from_config(&config);
+                    let config = match hook.config.read() {
+                        Ok(config) => config.clone(),
+                        Err(_) => return false,
+                    };
+                    let raw_matches = raw_binding_matches(&config, identity);
+                    let modifier_matches = config.binding.eq_ignore_ascii_case("standard")
+                        && is_standard_modifier_binding(&config)
+                        && standard_modifier_matches(&config.double_tap_key, identity.vk_code);
+                    let mode = TriggerMode::from_config(&config);
+                    // Official actions consume the physical key, including
+                    // auto-repeats, so the official input method only sees
+                    // the injected shortcut. Otherwise a second hands-free
+                    // press would end the session as "any key" and the
+                    // injected Ctrl+Win would immediately restart it.
+                    let swallow = raw_matches && is_official_action(&config);
 
-                        if is_up {
-                            if hook.pressed == Some(identity) {
-                                hook.pressed = None;
-                                if modifier_matches {
-                                    match mode {
-                                        TriggerMode::SingleTap if !hook.modifier_chorded => {
-                                            (hook.callback)(HotkeyEvent::Toggle);
-                                        }
-                                        TriggerMode::DoubleTap if !hook.modifier_chorded => {
-                                            emit_double_tap_if_ready(
-                                                hook,
-                                                identity,
-                                                config.double_tap_interval,
-                                            );
-                                        }
-                                        TriggerMode::Hold => {
-                                            (hook.callback)(HotkeyEvent::Stop);
-                                        }
-                                        _ => {}
+                    if is_up {
+                        if hook.pressed == Some(identity) {
+                            hook.pressed = None;
+                            if modifier_matches {
+                                match mode {
+                                    TriggerMode::SingleTap if !hook.modifier_chorded => {
+                                        (hook.callback)(HotkeyEvent::Toggle);
                                     }
-                                    hook.modifier_chorded = false;
-                                } else if raw_matches && mode == TriggerMode::Hold {
-                                    (hook.callback)(HotkeyEvent::Stop);
+                                    TriggerMode::DoubleTap if !hook.modifier_chorded => {
+                                        emit_double_tap_if_ready(
+                                            hook,
+                                            identity,
+                                            config.double_tap_interval,
+                                        );
+                                    }
+                                    TriggerMode::Hold => {
+                                        (hook.callback)(HotkeyEvent::Stop);
+                                    }
+                                    _ => {}
                                 }
-                            }
-                        } else if modifier_matches {
-                            if hook.pressed.is_none() {
-                                hook.pressed = Some(identity);
                                 hook.modifier_chorded = false;
-                                if mode == TriggerMode::Hold {
-                                    (hook.callback)(HotkeyEvent::Start);
-                                }
+                            } else if raw_matches && mode == TriggerMode::Hold {
+                                (hook.callback)(HotkeyEvent::Stop);
                             }
-                        } else if hook.pressed.is_some()
-                            && config.binding.eq_ignore_ascii_case("standard")
-                        {
-                            // A pure modifier only counts when it was pressed and
-                            // released without participating in another shortcut.
-                            hook.modifier_chorded = true;
-                        } else if raw_matches && hook.pressed.is_none() {
+                        }
+                    } else if modifier_matches {
+                        if hook.pressed.is_none() {
                             hook.pressed = Some(identity);
-                            match mode {
-                                TriggerMode::SingleTap => (hook.callback)(HotkeyEvent::Toggle),
-                                TriggerMode::DoubleTap => emit_double_tap_if_ready(
-                                    hook,
-                                    identity,
-                                    config.double_tap_interval,
-                                ),
-                                TriggerMode::Hold => (hook.callback)(HotkeyEvent::Start),
+                            hook.modifier_chorded = false;
+                            if mode == TriggerMode::Hold {
+                                (hook.callback)(HotkeyEvent::Start);
                             }
+                        }
+                    } else if hook.pressed.is_some()
+                        && config.binding.eq_ignore_ascii_case("standard")
+                    {
+                        // A pure modifier only counts when it was pressed and
+                        // released without participating in another shortcut.
+                        hook.modifier_chorded = true;
+                    } else if raw_matches && hook.pressed.is_none() {
+                        hook.pressed = Some(identity);
+                        match mode {
+                            TriggerMode::SingleTap => (hook.callback)(HotkeyEvent::Toggle),
+                            TriggerMode::DoubleTap => emit_double_tap_if_ready(
+                                hook,
+                                identity,
+                                config.double_tap_interval,
+                            ),
+                            TriggerMode::Hold => (hook.callback)(HotkeyEvent::Start),
                         }
                     }
+
+                    swallow
                 });
+                if swallow {
+                    return LRESULT(1);
+                }
             }
         }
 
@@ -637,47 +656,50 @@ fn run_raw_key_hook(
         if code >= 0 && matches!(wparam.0 as u32, WM_XBUTTONDOWN | WM_XBUTTONUP) {
             let mouse = &*(lparam.0 as *const MSLLHOOKSTRUCT);
             if let Some(identity) = mouse_side_button_binding(mouse.mouseData) {
-                HOOK_STATE.with(|state| {
-                    if let Some(ref mut hook) = *state.borrow_mut() {
-                        if !hook.is_active.load(Ordering::SeqCst) {
-                            return;
-                        }
-                        if wparam.0 as u32 == WM_XBUTTONDOWN
-                            && deliver_capture(&hook.capture_sender, identity)
-                        {
-                            return;
-                        }
-                        let config = match hook.config.read() {
-                            Ok(config) => config.clone(),
-                            Err(_) => return,
-                        };
-                        let raw_matches = config.binding.eq_ignore_ascii_case("raw")
-                            && config.raw_vk_code == identity.vk_code
-                            && (config.raw_scan_code == 0
-                                || config.raw_scan_code == identity.scan_code)
-                            && config.raw_extended == identity.extended;
-                        let mode = TriggerMode::from_config(&config);
-                        if wparam.0 as u32 == WM_XBUTTONUP {
-                            if hook.pressed == Some(identity) {
-                                hook.pressed = None;
-                                if raw_matches && mode == TriggerMode::Hold {
-                                    (hook.callback)(HotkeyEvent::Stop);
-                                }
+                let swallow = HOOK_STATE.with(|state| {
+                    let mut state = state.borrow_mut();
+                    let Some(hook) = state.as_mut() else {
+                        return false;
+                    };
+                    if !hook.is_active.load(Ordering::SeqCst) {
+                        return false;
+                    }
+                    if wparam.0 as u32 == WM_XBUTTONDOWN
+                        && deliver_capture(&hook.capture_sender, identity)
+                    {
+                        return false;
+                    }
+                    let config = match hook.config.read() {
+                        Ok(config) => config.clone(),
+                        Err(_) => return false,
+                    };
+                    let raw_matches = raw_binding_matches(&config, identity);
+                    let mode = TriggerMode::from_config(&config);
+                    let swallow = raw_matches && is_official_action(&config);
+                    if wparam.0 as u32 == WM_XBUTTONUP {
+                        if hook.pressed == Some(identity) {
+                            hook.pressed = None;
+                            if raw_matches && mode == TriggerMode::Hold {
+                                (hook.callback)(HotkeyEvent::Stop);
                             }
-                        } else if raw_matches && hook.pressed.is_none() {
-                            hook.pressed = Some(identity);
-                            match mode {
-                                TriggerMode::SingleTap => (hook.callback)(HotkeyEvent::Toggle),
-                                TriggerMode::DoubleTap => emit_double_tap_if_ready(
-                                    hook,
-                                    identity,
-                                    config.double_tap_interval,
-                                ),
-                                TriggerMode::Hold => (hook.callback)(HotkeyEvent::Start),
-                            }
+                        }
+                    } else if raw_matches && hook.pressed.is_none() {
+                        hook.pressed = Some(identity);
+                        match mode {
+                            TriggerMode::SingleTap => (hook.callback)(HotkeyEvent::Toggle),
+                            TriggerMode::DoubleTap => emit_double_tap_if_ready(
+                                hook,
+                                identity,
+                                config.double_tap_interval,
+                            ),
+                            TriggerMode::Hold => (hook.callback)(HotkeyEvent::Start),
                         }
                     }
+                    swallow
                 });
+                if swallow {
+                    return LRESULT(1);
+                }
             }
         }
         CallNextHookEx(None, code, wparam, lparam)
@@ -882,6 +904,54 @@ mod tests {
         assert_eq!(official_doubao_action(&config, HotkeyEvent::Toggle), None);
         assert_eq!(official_doubao_action(&config, HotkeyEvent::Start), None);
         assert_eq!(official_doubao_action(&config, HotkeyEvent::Stop), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn only_official_actions_swallow_the_matching_raw_binding() {
+        let identity = RawKeyBinding {
+            vk_code: 0xFF,
+            scan_code: 0x1E,
+            extended: false,
+        };
+        let mut config = HotkeyConfig::default();
+        config.binding = "raw".to_string();
+        config.raw_vk_code = 0xFF;
+        config.raw_scan_code = 0x1E;
+
+        assert!(raw_binding_matches(&config, identity));
+        assert!(!is_official_action(&config));
+
+        config.action = "official_hands_free".to_string();
+        assert!(is_official_action(&config));
+
+        config.raw_vk_code = 0xFE;
+        assert!(!raw_binding_matches(&config, identity));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn raw_binding_with_zero_scan_code_matches_any_scan_code() {
+        let mut config = HotkeyConfig::default();
+        config.binding = "raw".to_string();
+        config.raw_vk_code = 0x05;
+
+        assert!(raw_binding_matches(
+            &config,
+            RawKeyBinding {
+                vk_code: 0x05,
+                scan_code: 0,
+                extended: false,
+            }
+        ));
+        assert!(raw_binding_matches(
+            &config,
+            RawKeyBinding {
+                vk_code: 0x05,
+                scan_code: 0x2A,
+                extended: false,
+            }
+        ));
     }
 
     #[test]

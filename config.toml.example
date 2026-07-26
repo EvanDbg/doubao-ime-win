@@ -9,7 +9,8 @@ language = "zh-CN"
 
 [hotkey]
 # 触发动作: "voice_input" (本程序)、"official_hold" (按住时发送右 Alt) 或 "official_hands_free" (点按左 Ctrl+Win)
-# 两种官方动作仅支持 raw 自定义按键，且不会启动或显示本程序的录音窗口
+# 两种官方动作仅支持 raw 自定义按键：触发按键由本程序独占并转发官方快捷键，
+# 不会启动或显示本程序的录音窗口
 action = "voice_input"
 # 绑定来源: "standard" (标准快捷键) 或 "raw" (Windows 非标准按键)
 binding = "standard"
