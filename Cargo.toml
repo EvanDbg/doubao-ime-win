@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Doubao Voice Input Team"]
 description = "Windows voice input tool using Doubao ASR"
 license = "MIT"
-repository = "https://github.com/yourusername/doubao-ime-win"
+repository = "https://github.com/EvanDbg/doubao-ime-win"
 
 [dependencies]
 # Async runtime

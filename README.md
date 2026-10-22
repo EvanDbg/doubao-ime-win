@@ -2,6 +2,8 @@
 
 Windows 语音输入工具，基于豆包 ASR 实现实时语音识别。
 
+> **English summary:** A lightweight Windows voice-input tool written in Rust. It uses the Doubao ASR service for real-time speech recognition: double-tap `Ctrl` (configurable) or use the floating button to start dictation, and the recognized text is typed directly into the currently focused window. Portable single executable, no installation required. Licensed under the MIT License.
+
 ## 功能特性
 
 - 🎤 **实时语音识别** - 基于豆包 ASR 的高精度语音识别
@@ -114,9 +116,13 @@ cargo build --release
 > - 协议可能随时变更导致功能失效
 > - 请遵守相关法律法规
 
+## 贡献
+
+欢迎提交 Issue 和 Pull Request，详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## 许可证
 
-MIT License
+本项目以 MIT License 发布，详见 [LICENSE](LICENSE) 文件。
 
 ## 致谢
 
