@@ -46,6 +46,9 @@ jobs:
     
     - name: Install CMake
       uses: lukka/get-cmake@latest
+
+    - name: Run tests
+      run: cargo test
     
     - name: Build Release
       run: cargo build --release
