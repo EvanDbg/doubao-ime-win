@@ -81,6 +81,40 @@ pub async fn run_app(
     let runtime_handle = tokio::runtime::Handle::current();
 
     // Set up hotkey callback with state sync
+    let vc_for_start = voice_controller.clone();
+    let state_for_start = button_state_setter.clone();
+    let handle_for_start = runtime_handle.clone();
+    let start_action: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        let vc = vc_for_start.clone();
+        let setter = state_for_start.clone();
+        handle_for_start.spawn(async move {
+            let mut controller = vc.lock().await;
+            tracing::info!("Hotkey: starting voice input");
+            if let Err(e) = controller.start().await {
+                tracing::error!("Failed to start voice input: {}", e);
+            } else {
+                setter.set_state(ButtonState::Recording);
+            }
+        });
+    });
+
+    let vc_for_stop = voice_controller.clone();
+    let state_for_stop = button_state_setter.clone();
+    let handle_for_stop = runtime_handle.clone();
+    let stop_action: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        let vc = vc_for_stop.clone();
+        let setter = state_for_stop.clone();
+        handle_for_stop.spawn(async move {
+            let mut controller = vc.lock().await;
+            tracing::info!("Hotkey: stopping voice input");
+            setter.set_state(ButtonState::Processing);
+            if let Err(e) = controller.stop().await {
+                tracing::error!("Failed to stop voice input: {}", e);
+            }
+            setter.set_state(ButtonState::Idle);
+        });
+    });
+
     let vc_for_hotkey = voice_controller.clone();
     let state_for_hotkey = button_state_setter.clone();
     let handle_for_hotkey = runtime_handle.clone();
@@ -107,6 +141,7 @@ pub async fn run_app(
             }
         });
     });
+    _hotkey_manager.on_hold(move || start_action(), move || stop_action());
 
     // Spawn event handler thread for menu and floating button events
     let running_clone = running.clone();

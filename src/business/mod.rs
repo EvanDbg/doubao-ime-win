@@ -4,8 +4,10 @@
 
 mod hotkey_manager;
 mod text_inserter;
+mod trigger;
 mod voice_controller;
 
 pub use hotkey_manager::HotkeyManager;
 pub use text_inserter::TextInserter;
+pub use trigger::{FireEdge, KeyInput, TriggerDetector, TriggerEvent, TriggerStyle};
 pub use voice_controller::VoiceController;
