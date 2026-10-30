@@ -107,6 +107,8 @@ pub struct HotkeyConfig {
     pub double_tap_key: String,
     #[serde(default = "default_double_tap_interval")]
     pub double_tap_interval: u64,
+    #[serde(default = "default_trigger")]
+    pub trigger: String,
 }
 
 fn default_hotkey_mode() -> String {
@@ -125,6 +127,10 @@ fn default_double_tap_interval() -> u64 {
     300
 }
 
+fn default_trigger() -> String {
+    "double".to_string()
+}
+
 impl Default for HotkeyConfig {
     fn default() -> Self {
         Self {
@@ -132,6 +138,7 @@ impl Default for HotkeyConfig {
             combo_key: default_combo_key(),
             double_tap_key: default_double_tap_key(),
             double_tap_interval: default_double_tap_interval(),
+            trigger: default_trigger(),
         }
     }
 }
@@ -175,5 +182,29 @@ pub struct AsrConfig {
 impl Default for AsrConfig {
     fn default() -> Self {
         Self { vad_enabled: true }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppConfig, HotkeyConfig};
+
+    #[test]
+    fn old_hotkey_config_defaults_to_double_trigger() {
+        let old_config = r#"
+            [hotkey]
+            mode = "double_tap"
+            combo_key = "Ctrl+Shift+V"
+            double_tap_key = "Ctrl"
+            double_tap_interval = 300
+        "#;
+
+        let config: AppConfig = toml::from_str(old_config).unwrap();
+        assert_eq!(config.hotkey.trigger, "double");
+        assert_eq!(HotkeyConfig::default().trigger, "double");
+
+        let explicit_config = format!("{old_config}\ntrigger = \"single\"\n");
+        let config: AppConfig = toml::from_str(&explicit_config).unwrap();
+        assert_eq!(config.hotkey.trigger, "single");
     }
 }
