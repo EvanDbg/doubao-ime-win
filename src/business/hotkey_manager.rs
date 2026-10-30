@@ -1,26 +1,48 @@
 //! Hotkey Manager
 //!
 //! Manages global hotkeys for triggering voice input.
-//! Supports combo keys (Ctrl+Shift+V) and double-tap of modifier keys (Ctrl).
+//! Supports combo keys and single-tap, double-tap or hold gestures.
 
 use anyhow::{anyhow, Result};
 use global_hotkey::{
     hotkey::{Code, HotKey, Modifiers},
-    GlobalHotKeyEvent, GlobalHotKeyManager,
+    GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::{FireEdge, KeyInput, TriggerDetector, TriggerEvent, TriggerStyle};
 use crate::data::HotkeyConfig;
+
+#[derive(Default)]
+struct HotkeyHandlers {
+    toggle: Option<Arc<dyn Fn() + Send + Sync>>,
+    start: Option<Arc<dyn Fn() + Send + Sync>>,
+    stop: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+fn dispatch_event(handlers: &Arc<Mutex<HotkeyHandlers>>, event: TriggerEvent) {
+    let callback = {
+        let handlers = handlers.lock().unwrap();
+        match event {
+            TriggerEvent::Toggle => handlers.toggle.clone(),
+            TriggerEvent::Start => handlers.start.clone(),
+            TriggerEvent::Stop => handlers.stop.clone(),
+        }
+    };
+    if let Some(callback) = callback {
+        callback();
+    }
+}
 
 /// Hotkey mode
 #[derive(Debug, Clone, PartialEq)]
 pub enum HotkeyMode {
     /// Combination key mode (e.g., Ctrl+Shift+V)
     Combo,
-    /// Double-tap mode (e.g., double-tap Ctrl)
+    /// Tap-key mode with a configurable trigger gesture
     DoubleTap,
 }
 
@@ -30,6 +52,8 @@ pub struct HotkeyManager {
     mode: HotkeyMode,
     double_tap_interval: Duration,
     double_tap_key: String,
+    trigger_style: TriggerStyle,
+    handlers: Arc<Mutex<HotkeyHandlers>>,
     is_active: Arc<AtomicBool>,
 }
 
@@ -40,6 +64,19 @@ impl HotkeyManager {
             HotkeyMode::Combo
         } else {
             HotkeyMode::DoubleTap
+        };
+
+        let trigger_style = match config.trigger.to_lowercase().as_str() {
+            "single" => TriggerStyle::Single,
+            "hold" => TriggerStyle::Hold,
+            "double" => TriggerStyle::Double,
+            _ => {
+                tracing::warn!(
+                    "Unknown hotkey trigger '{}'; falling back to double-tap",
+                    config.trigger
+                );
+                TriggerStyle::Double
+            }
         };
 
         let manager = GlobalHotKeyManager::new()
@@ -62,7 +99,7 @@ impl HotkeyManager {
                 if key_lower == "ctrl" || key_lower == "shift" || key_lower == "alt" {
                     // Will use Windows keyboard hook for modifier keys
                     tracing::info!(
-                        "Double-tap modifier key: {} (using keyboard hook)",
+                        "Trigger modifier key: {} (using keyboard hook)",
                         config.double_tap_key
                     );
                 } else {
@@ -71,18 +108,22 @@ impl HotkeyManager {
                     manager
                         .register(hotkey)
                         .map_err(|e| anyhow!("Failed to register hotkey: {}", e))?;
-                    tracing::info!("Registered double-tap hotkey: {}", config.double_tap_key);
+                    tracing::info!("Registered trigger hotkey: {}", config.double_tap_key);
                 }
             }
         }
 
-        Ok(Self {
+        let hotkey_manager = Self {
             _manager: Some(manager),
             mode,
-            double_tap_interval: Duration::from_millis(config.double_tap_interval),
+            double_tap_interval: Duration::from_millis(config.double_tap_interval.clamp(100, 1000)),
             double_tap_key: config.double_tap_key.clone(),
+            trigger_style,
+            handlers: Arc::new(Mutex::new(HotkeyHandlers::default())),
             is_active: Arc::new(AtomicBool::new(true)),
-        })
+        };
+        hotkey_manager.start_listener();
+        Ok(hotkey_manager)
     }
 
     /// Set callback for when hotkey is triggered
@@ -90,35 +131,64 @@ impl HotkeyManager {
     where
         F: Fn() + Send + Sync + 'static,
     {
+        self.handlers.lock().unwrap().toggle = Some(Arc::new(callback));
+    }
+
+    /// Set callbacks for press-and-hold recording
+    pub fn on_hold<F1, F2>(&self, on_start: F1, on_stop: F2)
+    where
+        F1: Fn() + Send + Sync + 'static,
+        F2: Fn() + Send + Sync + 'static,
+    {
+        let mut handlers = self.handlers.lock().unwrap();
+        handlers.start = Some(Arc::new(on_start));
+        handlers.stop = Some(Arc::new(on_stop));
+    }
+
+    fn start_listener(&self) {
         let mode = self.mode.clone();
         let double_tap_interval = self.double_tap_interval;
         let double_tap_key = self.double_tap_key.clone();
         let is_active = self.is_active.clone();
-        let callback = Arc::new(callback);
+        let trigger_style = self.trigger_style;
+        let handlers = self.handlers.clone();
 
         // Check if we need to use keyboard hook for modifier keys
         let key_lower = double_tap_key.to_lowercase();
-        let use_keyboard_hook =
-            mode == HotkeyMode::DoubleTap && (key_lower == "ctrl" || key_lower == "shift" || key_lower == "alt");
+        let use_keyboard_hook = mode == HotkeyMode::DoubleTap
+            && (key_lower == "ctrl" || key_lower == "shift" || key_lower == "alt");
 
         if use_keyboard_hook {
-            // Use Windows keyboard hook for modifier key double-tap
+            // Use Windows keyboard hook for modifier key gestures
             #[cfg(target_os = "windows")]
             {
-                let callback_clone = callback.clone();
                 thread::spawn(move || {
-                    run_modifier_double_tap_hook(key_lower, double_tap_interval, is_active, callback_clone);
+                    run_modifier_trigger_hook(
+                        key_lower,
+                        trigger_style,
+                        double_tap_interval,
+                        is_active,
+                        handlers,
+                    );
                 });
             }
             #[cfg(not(target_os = "windows"))]
             {
-                tracing::warn!("Modifier key double-tap not supported on this platform");
+                tracing::warn!("Modifier key triggers not supported on this platform");
             }
         } else {
             // Use global_hotkey receiver
             thread::spawn(move || {
                 let receiver = GlobalHotKeyEvent::receiver();
-                let mut last_press_time: Option<Instant> = None;
+                let mut detector = TriggerDetector::new();
+                let trigger_style = if mode == HotkeyMode::DoubleTap
+                    && trigger_style == TriggerStyle::Hold
+                {
+                    tracing::warn!("hold trigger needs a modifier key; falling back to double-tap");
+                    TriggerStyle::Double
+                } else {
+                    trigger_style
+                };
 
                 loop {
                     if !is_active.load(Ordering::SeqCst) {
@@ -126,24 +196,35 @@ impl HotkeyManager {
                         continue;
                     }
 
-                    if let Ok(_event) = receiver.recv() {
+                    if let Ok(event) = receiver.recv() {
                         match mode {
                             HotkeyMode::Combo => {
-                                callback();
+                                dispatch_event(&handlers, TriggerEvent::Toggle);
                             }
                             HotkeyMode::DoubleTap => {
-                                let now = Instant::now();
-
-                                if let Some(last) = last_press_time {
-                                    let elapsed = now.duration_since(last);
-                                    if elapsed <= double_tap_interval {
-                                        callback();
-                                        last_press_time = None;
-                                        continue;
-                                    }
+                                if event.state != HotKeyState::Pressed {
+                                    continue;
                                 }
-
-                                last_press_time = Some(now);
+                                let now = Instant::now();
+                                let event = detector.handle(
+                                    KeyInput::Press(0),
+                                    trigger_style,
+                                    double_tap_interval,
+                                    FireEdge::Press,
+                                    now,
+                                );
+                                // This adapter treats each Pressed event as a tap. Close
+                                // its press without counting the channel's Released event.
+                                let _ = detector.handle(
+                                    KeyInput::Release(0),
+                                    trigger_style,
+                                    double_tap_interval,
+                                    FireEdge::Press,
+                                    now,
+                                );
+                                if let Some(event) = event {
+                                    dispatch_event(&handlers, event);
+                                }
                             }
                         }
                     }
@@ -158,24 +239,23 @@ impl HotkeyManager {
     }
 }
 
-/// Windows keyboard hook for modifier key double-tap detection
+/// Windows keyboard hook for modifier key trigger detection
 #[cfg(target_os = "windows")]
-fn run_modifier_double_tap_hook<F>(
+fn run_modifier_trigger_hook(
     key: String,
+    style: TriggerStyle,
     interval: Duration,
     is_active: Arc<AtomicBool>,
-    callback: Arc<F>,
-) where
-    F: Fn() + Send + Sync + 'static,
-{
+    handlers: Arc<Mutex<HotkeyHandlers>>,
+) {
     use std::cell::RefCell;
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_LSHIFT, VK_RSHIFT, VK_LMENU, VK_RMENU,
+        VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_RCONTROL, VK_RMENU, VK_RSHIFT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-        HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYUP,
+        HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
         WM_SYSKEYUP,
     };
 
@@ -192,7 +272,7 @@ fn run_modifier_double_tap_hook<F>(
         return;
     }
 
-    tracing::info!("Starting keyboard hook for double-tap {} detection", key);
+    tracing::info!("Starting keyboard hook for {:?} {} detection", style, key);
 
     // Thread-local state for hook callback
     thread_local! {
@@ -202,8 +282,9 @@ fn run_modifier_double_tap_hook<F>(
     struct HookState {
         target_vks: Vec<u16>,
         interval: Duration,
-        last_release: Option<Instant>,
-        callback: Arc<dyn Fn() + Send + Sync>,
+        style: TriggerStyle,
+        detector: TriggerDetector,
+        handlers: Arc<Mutex<HotkeyHandlers>>,
         is_active: Arc<AtomicBool>,
     }
 
@@ -212,8 +293,9 @@ fn run_modifier_double_tap_hook<F>(
         *state.borrow_mut() = Some(HookState {
             target_vks,
             interval,
-            last_release: None,
-            callback: callback as Arc<dyn Fn() + Send + Sync>,
+            style,
+            detector: TriggerDetector::new(),
+            handlers,
             is_active,
         });
     });
@@ -227,27 +309,35 @@ fn run_modifier_double_tap_hook<F>(
         if code >= 0 {
             let kb_struct = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
             let vk_code = kb_struct.vkCode as u16;
+            let is_key_down = wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN;
             let is_key_up = wparam.0 as u32 == WM_KEYUP || wparam.0 as u32 == WM_SYSKEYUP;
 
             HOOK_STATE.with(|state| {
                 if let Some(ref mut hook_state) = *state.borrow_mut() {
-                    if hook_state.is_active.load(Ordering::SeqCst)
-                        && hook_state.target_vks.contains(&vk_code)
-                        && is_key_up
-                    {
-                        let now = Instant::now();
-                        if let Some(last) = hook_state.last_release {
-                            let elapsed = now.duration_since(last);
-                            if elapsed <= hook_state.interval {
-                                // Double-tap detected!
-                                tracing::info!("Double-tap detected!");
-                                (hook_state.callback)();
-                                hook_state.last_release = None;
+                    if hook_state.is_active.load(Ordering::SeqCst) {
+                        let input = if hook_state.target_vks.contains(&vk_code) {
+                            if is_key_down {
+                                Some(KeyInput::Press(kb_struct.vkCode as u32))
+                            } else if is_key_up {
+                                Some(KeyInput::Release(kb_struct.vkCode as u32))
                             } else {
-                                hook_state.last_release = Some(now);
+                                None
                             }
+                        } else if is_key_down {
+                            Some(KeyInput::ForeignPress)
                         } else {
-                            hook_state.last_release = Some(now);
+                            None
+                        };
+                        if let Some(input) = input {
+                            if let Some(event) = hook_state.detector.handle(
+                                input,
+                                hook_state.style,
+                                hook_state.interval,
+                                FireEdge::Release,
+                                Instant::now(),
+                            ) {
+                                dispatch_event(&hook_state.handlers, event);
+                            }
                         }
                     }
                 }
@@ -258,9 +348,7 @@ fn run_modifier_double_tap_hook<F>(
     }
 
     // Install the hook
-    let hook = unsafe {
-        SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0)
-    };
+    let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) };
 
     match hook {
         Ok(h) => {
