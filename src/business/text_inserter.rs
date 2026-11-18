@@ -105,11 +105,7 @@ impl TextInserter {
         let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) };
 
         if sent != inputs.len() as u32 {
-            tracing::warn!(
-                "SendInput sent {} of {} inputs",
-                sent,
-                inputs.len()
-            );
+            tracing::warn!("SendInput sent {} of {} inputs", sent, inputs.len());
         }
 
         Ok(())

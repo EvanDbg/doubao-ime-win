@@ -18,6 +18,8 @@ pub struct AppConfig {
     pub floating_button: FloatingButtonConfig,
     #[serde(default)]
     pub asr: AsrConfig,
+    #[serde(default)]
+    pub ai: AiConfig,
 }
 
 impl Default for AppConfig {
@@ -27,6 +29,7 @@ impl Default for AppConfig {
             hotkey: HotkeyConfig::default(),
             floating_button: FloatingButtonConfig::default(),
             asr: AsrConfig::default(),
+            ai: AiConfig::default(),
         }
     }
 }
@@ -177,11 +180,61 @@ impl Default for FloatingButtonConfig {
 pub struct AsrConfig {
     #[serde(default = "default_true")]
     pub vad_enabled: bool,
+    #[serde(default = "default_true")]
+    pub caption_punctuation: bool,
+    #[serde(default = "default_true")]
+    pub sentence_punctuation: bool,
 }
 
 impl Default for AsrConfig {
     fn default() -> Self {
-        Self { vad_enabled: true }
+        Self {
+            vad_enabled: true,
+            caption_punctuation: true,
+            sentence_punctuation: true,
+        }
+    }
+}
+
+/// AI post-processing configuration for OpenAI-compatible APIs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_ai_endpoint")]
+    pub endpoint: String,
+    #[serde(default = "default_ai_model")]
+    pub model: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_ai_timeout")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_true")]
+    pub accept_invalid_certs: bool,
+}
+
+fn default_ai_endpoint() -> String {
+    "https://api.openai.com/v1/chat/completions".to_string()
+}
+
+fn default_ai_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
+fn default_ai_timeout() -> u64 {
+    8000
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: default_ai_endpoint(),
+            model: default_ai_model(),
+            api_key: String::new(),
+            timeout_ms: default_ai_timeout(),
+            accept_invalid_certs: true,
+        }
     }
 }
 

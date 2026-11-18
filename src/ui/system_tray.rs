@@ -12,15 +12,18 @@ use tray_icon::{
 };
 
 use crate::business::{HotkeyManager, VoiceController};
-use crate::data::AppConfig;
-use crate::ui::{ButtonState, FloatingButton, FloatingButtonConfig, FloatingButtonEvent};
+use crate::data::RuntimeSettings;
+use crate::ui::{
+    settings_window, ButtonState, FloatingButton, FloatingButtonConfig, FloatingButtonEvent,
+};
 
 /// Run the application with system tray and floating button
 pub async fn run_app(
-    config: AppConfig,
+    settings: RuntimeSettings,
     voice_controller: Arc<Mutex<VoiceController>>,
     _hotkey_manager: HotkeyManager,
 ) -> Result<()> {
+    let config = settings.get();
     // Create floating button
     let mut floating_button = FloatingButton::new();
     let button_state_setter = floating_button.state_setter();
@@ -147,9 +150,19 @@ pub async fn run_app(
     let running_clone = running.clone();
     let vc_clone = voice_controller.clone();
     let state_setter_clone = button_state_setter.clone();
+    let settings_clone = settings.clone();
 
     std::thread::spawn(move || {
         while running_clone.load(Ordering::SeqCst) {
+            if settings_window::exit_requested() {
+                running_clone.store(false, Ordering::SeqCst);
+                #[cfg(target_os = "windows")]
+                unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
+                }
+                break;
+            }
+
             // Check menu events
             if let Ok(event) = menu_rx.recv_timeout(std::time::Duration::from_millis(50)) {
                 if event.id == start_id {
@@ -182,19 +195,7 @@ pub async fn run_app(
                     });
                 } else if event.id == settings_id {
                     tracing::info!("Settings from menu");
-                    #[cfg(target_os = "windows")]
-                    {
-                        use windows::core::w;
-                        use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_OK, MB_ICONINFORMATION};
-                        unsafe {
-                            MessageBoxW(
-                                None,
-                                w!("豆包语音输入 设置\n\n快捷键: 双击 Ctrl 开始/停止录音\n悬浮按钮: 点击切换录音状态\n\n配置文件: config.toml"),
-                                w!("设置"),
-                                MB_OK | MB_ICONINFORMATION,
-                            );
-                        }
-                    }
+                    settings_window::open(Arc::new(settings_clone.clone()));
                 } else if event.id == quit_id {
                     tracing::info!("Quit from menu");
                     running_clone.store(false, Ordering::SeqCst);
@@ -231,13 +232,9 @@ pub async fn run_app(
                                 }
                             });
                         }
-                        FloatingButtonEvent::Exit => {
-                            tracing::info!("Exit from floating button");
-                            running_clone.store(false, Ordering::SeqCst);
-                            #[cfg(target_os = "windows")]
-                            unsafe {
-                                windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
-                            }
+                        FloatingButtonEvent::OpenSettings => {
+                            tracing::info!("Settings from floating button");
+                            settings_window::open(Arc::new(settings_clone.clone()));
                         }
                     }
                 }
@@ -288,8 +285,8 @@ fn load_icon() -> Result<tray_icon::Icon> {
     let radius = (width.min(height) as f32 / 2.0) - 1.0;
 
     // Modern gradient colors (purple to blue)
-    let color_start = (139u8, 92u8, 246u8);  // Purple
-    let color_end = (59u8, 130u8, 246u8);    // Blue
+    let color_start = (139u8, 92u8, 246u8); // Purple
+    let color_end = (59u8, 130u8, 246u8); // Blue
 
     for y in 0..height {
         for x in 0..width {
@@ -300,9 +297,12 @@ fn load_icon() -> Result<tray_icon::Icon> {
             if dist <= radius {
                 // Gradient based on position (top-left to bottom-right)
                 let gradient_t = ((x as f32 / width as f32) + (y as f32 / height as f32)) / 2.0;
-                let r = (color_start.0 as f32 * (1.0 - gradient_t) + color_end.0 as f32 * gradient_t) as u8;
-                let g = (color_start.1 as f32 * (1.0 - gradient_t) + color_end.1 as f32 * gradient_t) as u8;
-                let b = (color_start.2 as f32 * (1.0 - gradient_t) + color_end.2 as f32 * gradient_t) as u8;
+                let r = (color_start.0 as f32 * (1.0 - gradient_t)
+                    + color_end.0 as f32 * gradient_t) as u8;
+                let g = (color_start.1 as f32 * (1.0 - gradient_t)
+                    + color_end.1 as f32 * gradient_t) as u8;
+                let b = (color_start.2 as f32 * (1.0 - gradient_t)
+                    + color_end.2 as f32 * gradient_t) as u8;
 
                 // Soft edge anti-aliasing
                 let alpha = if dist > radius - 1.5 {

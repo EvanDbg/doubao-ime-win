@@ -30,3 +30,20 @@ position_y = 100
 [asr]
 # 是否启用 VAD (语音活动检测)
 vad_enabled = true
+# 字幕识别结果是否保留标点
+caption_punctuation = true
+# 整句最终结果是否保留标点
+sentence_punctuation = true
+
+[ai]
+# 启用识别结果的 AI 后处理
+enabled = false
+# OpenAI 兼容接口地址
+endpoint = "https://api.openai.com/v1/chat/completions"
+# 模型名称
+model = "gpt-4o-mini"
+# API Key（不要提交到仓库）
+api_key = ""
+# 请求超时时间（毫秒）
+timeout_ms = 8000
+accept_invalid_certs = false

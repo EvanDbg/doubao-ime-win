@@ -3,10 +3,11 @@
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use std::thread;
-use std::sync::mpsc as std_mpsc;
 use tokio::sync::mpsc as tokio_mpsc;
 
 use super::encoder::OpusEncoder;
@@ -15,6 +16,18 @@ use super::encoder::OpusEncoder;
 const OPUS_SAMPLE_RATE: u32 = 16000;
 const OPUS_CHANNELS: u16 = 1;
 const FRAME_DURATION_MS: u32 = 20;
+
+const VAD_START_SPEECH_FRAMES: usize = 2;
+const VAD_END_SILENCE_FRAMES: usize = 20;
+const VAD_PREBUFFER_FRAMES: usize = 24;
+const VAD_RMS_THRESHOLD: i32 = 350;
+
+/// Audio frames gated by the local voice activity detector.
+#[derive(Debug, Clone)]
+pub enum AudioFrameEvent {
+    Speech { started: bool, frame: Vec<u8> },
+    Silence,
+}
 
 pub struct AudioCapture {
     is_recording: Arc<AtomicBool>,
@@ -25,7 +38,10 @@ impl AudioCapture {
         let host = cpal::default_host();
         match host.default_input_device() {
             Some(device) => {
-                println!("[AudioCapture] Default device: {}", device.name().unwrap_or_default());
+                println!(
+                    "[AudioCapture] Default device: {}",
+                    device.name().unwrap_or_default()
+                );
             }
             None => {
                 println!("[AudioCapture] WARNING: No default input device found.");
@@ -41,12 +57,12 @@ impl AudioCapture {
         self.is_recording.load(Ordering::SeqCst)
     }
 
-    pub fn start(&self) -> Result<tokio_mpsc::Receiver<Vec<u8>>> {
+    pub fn start(&self, vad_enabled: bool) -> Result<tokio_mpsc::Receiver<AudioFrameEvent>> {
         if self.is_recording.swap(true, Ordering::SeqCst) {
             return Err(anyhow!("Already recording"));
         }
 
-        let (tokio_tx, tokio_rx) = tokio_mpsc::channel::<Vec<u8>>(100);
+        let (tokio_tx, tokio_rx) = tokio_mpsc::channel::<AudioFrameEvent>(100);
         let is_recording = self.is_recording.clone();
 
         thread::spawn(move || {
@@ -62,11 +78,11 @@ impl AudioCapture {
             println!("[AudioCapture] >>> Thread spawned <<<");
             use std::io::Write;
             let _ = std::io::stdout().flush();
-            
+
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_audio_capture(tokio_tx, is_recording.clone())
+                run_audio_capture(tokio_tx, is_recording.clone(), vad_enabled)
             }));
-            
+
             match result {
                 Ok(Ok(_)) => {
                     println!("[AudioCapture] Completed normally");
@@ -78,7 +94,7 @@ impl AudioCapture {
                     println!("[AudioCapture] PANIC: {:?}", panic_info);
                 }
             }
-            
+
             is_recording.store(false, Ordering::SeqCst);
             println!("[AudioCapture] Thread exiting");
             let _ = std::io::stdout().flush();
@@ -95,15 +111,19 @@ impl AudioCapture {
 }
 
 fn run_audio_capture(
-    tokio_tx: tokio_mpsc::Sender<Vec<u8>>,
+    tokio_tx: tokio_mpsc::Sender<AudioFrameEvent>,
     is_recording: Arc<AtomicBool>,
+    vad_enabled: bool,
 ) -> Result<()> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
         .ok_or_else(|| anyhow!("No input device available"))?;
 
-    println!("[AudioCapture] Device: {}", device.name().unwrap_or_default());
+    println!(
+        "[AudioCapture] Device: {}",
+        device.name().unwrap_or_default()
+    );
 
     // Get the device's default config - USE THIS EXACTLY
     let supported_config = device.default_input_config()?;
@@ -112,9 +132,11 @@ fn run_audio_capture(
     let native_sample_rate = supported_config.sample_rate().0;
     let native_channels = supported_config.channels();
     let sample_format = supported_config.sample_format();
-    
-    println!("[AudioCapture] Native: {}Hz, {} channels, {:?}", 
-        native_sample_rate, native_channels, sample_format);
+
+    println!(
+        "[AudioCapture] Native: {}Hz, {} channels, {:?}",
+        native_sample_rate, native_channels, sample_format
+    );
 
     // Use the device's EXACT config (don't override channels!)
     let config = supported_config.config();
@@ -133,11 +155,14 @@ fn run_audio_capture(
     };
 
     // Calculate frame sizes
-    let samples_per_frame_native = (native_sample_rate * FRAME_DURATION_MS / 1000) as usize * native_channels as usize;
+    let samples_per_frame_native =
+        (native_sample_rate * FRAME_DURATION_MS / 1000) as usize * native_channels as usize;
     let samples_per_frame_opus = (OPUS_SAMPLE_RATE * FRAME_DURATION_MS / 1000) as usize; // mono
 
-    println!("[AudioCapture] Samples/frame: native={} ({}ch), opus={} (mono)", 
-        samples_per_frame_native, native_channels, samples_per_frame_opus);
+    println!(
+        "[AudioCapture] Samples/frame: native={} ({}ch), opus={} (mono)",
+        samples_per_frame_native, native_channels, samples_per_frame_opus
+    );
 
     let (std_tx, std_rx) = std_mpsc::channel::<Vec<i16>>();
 
@@ -154,16 +179,16 @@ fn run_audio_capture(
         SampleFormat::I16 => {
             println!("[AudioCapture] Building I16 stream");
             let mut buffer = Vec::<i16>::with_capacity(samples_per_frame_native * 2);
-            
+
             device.build_input_stream(
                 &config,
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
                     if !is_recording_clone.load(Ordering::SeqCst) {
                         return;
                     }
-                    
+
                     buffer.extend_from_slice(data);
-                    
+
                     while buffer.len() >= samples_per_frame_native {
                         let frame: Vec<i16> = buffer.drain(..samples_per_frame_native).collect();
                         let _ = std_tx.send(frame);
@@ -176,18 +201,18 @@ fn run_audio_capture(
         SampleFormat::F32 => {
             println!("[AudioCapture] Building F32 stream");
             let mut buffer = Vec::<i16>::with_capacity(samples_per_frame_native * 2);
-            
+
             device.build_input_stream(
                 &config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     if !is_recording_clone.load(Ordering::SeqCst) {
                         return;
                     }
-                    
+
                     // Convert f32 to i16
                     let samples: Vec<i16> = data.iter().map(|s| (*s * 32767.0) as i16).collect();
                     buffer.extend_from_slice(&samples);
-                    
+
                     while buffer.len() >= samples_per_frame_native {
                         let frame: Vec<i16> = buffer.drain(..samples_per_frame_native).collect();
                         let _ = std_tx.send(frame);
@@ -204,7 +229,12 @@ fn run_audio_capture(
 
     stream.play()?;
     println!("[AudioCapture] Stream playing!");
-    println!("[Mic] Recording started...");
+    println!(
+        "[Mic] Recording started ({} VAD)...",
+        if vad_enabled { "local" } else { "bypass" }
+    );
+
+    let mut vad_gate = VadGate::new(vad_enabled);
 
     // Process frames: convert to mono 16kHz and encode
     while is_recording.load(Ordering::SeqCst) {
@@ -213,7 +243,8 @@ fn run_audio_capture(
                 // Step 1: Convert stereo to mono (if needed)
                 let mono_frame: Vec<i16> = if native_channels_clone > 1 {
                     // Average channels
-                    frame.chunks(native_channels_clone as usize)
+                    frame
+                        .chunks(native_channels_clone as usize)
                         .map(|chunk| {
                             let sum: i32 = chunk.iter().map(|&s| s as i32).sum();
                             (sum / native_channels_clone as i32) as i16
@@ -222,11 +253,14 @@ fn run_audio_capture(
                 } else {
                     frame
                 };
-                
+
                 // Step 2: Resample to 16kHz (if needed)
-                let mono_samples_per_native_frame = samples_per_frame_native / native_channels_clone as usize;
-                let resampled: Vec<i16> = if mono_samples_per_native_frame != samples_per_frame_opus {
-                    let ratio = mono_samples_per_native_frame as f32 / samples_per_frame_opus as f32;
+                let mono_samples_per_native_frame =
+                    samples_per_frame_native / native_channels_clone as usize;
+                let resampled: Vec<i16> = if mono_samples_per_native_frame != samples_per_frame_opus
+                {
+                    let ratio =
+                        mono_samples_per_native_frame as f32 / samples_per_frame_opus as f32;
                     (0..samples_per_frame_opus)
                         .map(|i| {
                             let src_idx = ((i as f32 * ratio) as usize).min(mono_frame.len() - 1);
@@ -236,10 +270,10 @@ fn run_audio_capture(
                 } else {
                     mono_frame
                 };
-                
+
                 // Step 3: Convert to bytes
                 let pcm_bytes: Vec<u8> = resampled.iter().flat_map(|s| s.to_le_bytes()).collect();
-                
+
                 // Step 4: Encode to Opus
                 match encoder.encode(&pcm_bytes) {
                     Ok(opus_frame) => {
@@ -248,11 +282,18 @@ fn run_audio_capture(
                             println!("[Audio] First frame captured and encoded!");
                         }
                         if count > 0 && count % 50 == 0 {
-                            println!("[AudioCapture] Frames: {} ({:.1}s)", count, count as f32 * 0.02);
+                            println!(
+                                "[AudioCapture] Frames: {} ({:.1}s)",
+                                count,
+                                count as f32 * 0.02
+                            );
                         }
-                        
-                        if tokio_tx.try_send(opus_frame).is_err() {
-                            println!("[AudioCapture] Channel full, dropping frame");
+
+                        for event in vad_gate.push(opus_frame, calculate_rms(&resampled)) {
+                            if tokio_tx.try_send(event).is_err() {
+                                println!("[AudioCapture] Channel full, dropping speech frame");
+                                break;
+                            }
                         }
                     }
                     Err(e) => {
@@ -274,7 +315,170 @@ fn run_audio_capture(
 
     let total = frame_counter.load(Ordering::SeqCst);
     println!("[AudioCapture] Total frames: {}", total);
-    println!("[Mic] Stopped. {} frames ({:.1}s)", total, total as f32 * 0.02);
+    println!(
+        "[Mic] Stopped. {} frames ({:.1}s)",
+        total,
+        total as f32 * 0.02
+    );
 
     Ok(())
+}
+
+fn calculate_rms(samples: &[i16]) -> i32 {
+    if samples.is_empty() {
+        return 0;
+    }
+
+    let squared_sum: i64 = samples
+        .iter()
+        .map(|&sample| i64::from(sample) * i64::from(sample))
+        .sum();
+    (squared_sum as f64 / samples.len() as f64).sqrt() as i32
+}
+
+struct VadGate {
+    enabled: bool,
+    speech_started: bool,
+    in_speech: bool,
+    consecutive_speech: usize,
+    consecutive_silence: usize,
+    prebuffer: VecDeque<Vec<u8>>,
+}
+
+impl VadGate {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            speech_started: false,
+            in_speech: false,
+            consecutive_speech: 0,
+            consecutive_silence: 0,
+            prebuffer: VecDeque::with_capacity(VAD_PREBUFFER_FRAMES),
+        }
+    }
+
+    fn push(&mut self, frame: Vec<u8>, rms: i32) -> Vec<AudioFrameEvent> {
+        if !self.enabled {
+            let started = !self.speech_started;
+            self.speech_started = true;
+            return vec![AudioFrameEvent::Speech { started, frame }];
+        }
+
+        if self.in_speech {
+            let is_voice = rms >= VAD_RMS_THRESHOLD;
+            if is_voice {
+                self.consecutive_silence = 0;
+            } else {
+                self.consecutive_silence += 1;
+            }
+
+            let mut events = vec![AudioFrameEvent::Speech {
+                started: false,
+                frame,
+            }];
+            if self.consecutive_silence >= VAD_END_SILENCE_FRAMES {
+                self.in_speech = false;
+                self.consecutive_speech = 0;
+                self.consecutive_silence = 0;
+                self.prebuffer.clear();
+                events.push(AudioFrameEvent::Silence);
+            }
+            return events;
+        }
+
+        if rms < VAD_RMS_THRESHOLD {
+            self.consecutive_speech = 0;
+            self.push_prebuffer(frame);
+            return Vec::new();
+        }
+
+        self.consecutive_speech += 1;
+        self.push_prebuffer(frame);
+        if self.consecutive_speech < VAD_START_SPEECH_FRAMES {
+            return Vec::new();
+        }
+
+        self.in_speech = true;
+        self.consecutive_speech = 0;
+        self.consecutive_silence = 0;
+
+        let mut events = Vec::with_capacity(self.prebuffer.len());
+        for (index, buffered_frame) in self.prebuffer.drain(..).enumerate() {
+            events.push(AudioFrameEvent::Speech {
+                started: index == 0,
+                frame: buffered_frame,
+            });
+        }
+        events
+    }
+
+    fn push_prebuffer(&mut self, frame: Vec<u8>) {
+        if self.prebuffer.len() >= VAD_PREBUFFER_FRAMES {
+            self.prebuffer.pop_front();
+        }
+        self.prebuffer.push_back(frame);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn silent_frame() -> Vec<u8> {
+        vec![0; 20]
+    }
+
+    #[test]
+    fn silence_is_not_emitted_before_speech() {
+        let mut gate = VadGate::new(true);
+        for _ in 0..100 {
+            assert!(gate.push(silent_frame(), 0).is_empty());
+        }
+    }
+
+    #[test]
+    fn speech_start_emits_prebuffer_with_first_marker() {
+        let mut gate = VadGate::new(true);
+        assert!(gate.push(silent_frame(), 0).is_empty());
+
+        let events = gate.push(vec![1], VAD_RMS_THRESHOLD);
+        assert!(events.is_empty());
+
+        let events = gate.push(vec![2], VAD_RMS_THRESHOLD);
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            events[0],
+            AudioFrameEvent::Speech { started: true, .. }
+        ));
+    }
+
+    #[test]
+    fn sustained_silence_ends_speech_and_frames_are_not_dropped() {
+        let mut gate = VadGate::new(true);
+        assert!(gate.push(vec![1], 0).is_empty());
+        assert!(gate.push(vec![2], VAD_RMS_THRESHOLD).is_empty());
+        let events = gate.push(vec![3], VAD_RMS_THRESHOLD);
+        assert_eq!(events.len(), 3);
+
+        for index in 0..VAD_END_SILENCE_FRAMES {
+            let events = gate.push(silent_frame(), 0);
+            if index + 1 == VAD_END_SILENCE_FRAMES {
+                assert_eq!(events.len(), 2);
+                assert!(matches!(events[1], AudioFrameEvent::Silence));
+            } else {
+                assert_eq!(events.len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_gate_bypasses_all_frames() {
+        let mut gate = VadGate::new(false);
+        let events = gate.push(silent_frame(), 0);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            AudioFrameEvent::Speech { started: true, .. }
+        ));
+    }
 }

@@ -24,7 +24,12 @@ fn main() {
     static START_WIN_X: AtomicI32 = AtomicI32::new(0);
     static START_WIN_Y: AtomicI32 = AtomicI32::new(0);
 
-    unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe extern "system" fn wnd_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
         const WM_CREATE: u32 = 0x0001;
         const WM_DESTROY: u32 = 0x0002;
         const WM_PAINT: u32 = 0x000F;
@@ -42,28 +47,34 @@ fn main() {
             WM_PAINT => {
                 let mut ps = PAINTSTRUCT::default();
                 let hdc = BeginPaint(hwnd, &mut ps);
-                
+
                 let bg = CreateSolidBrush(COLORREF(0x00FF00));
                 let mut r = RECT::default();
                 let _ = GetClientRect(hwnd, &mut r);
                 FillRect(hdc, &r, bg);
                 let _ = DeleteObject(bg);
-                
+
                 let state = STATE.load(Ordering::SeqCst);
                 let color = match state {
                     0 => COLORREF(0xEA7E66),
                     1 => COLORREF(0x4040FF),
                     _ => COLORREF(0xFF8040),
                 };
-                
+
                 let brush = CreateSolidBrush(color);
                 let pen = CreatePen(PS_SOLID, 2, COLORREF(0xFFFFFF));
                 let ob = SelectObject(hdc, brush);
                 let op = SelectObject(hdc, pen);
-                
+
                 let c = WINDOW_SIZE / 2;
-                let _ = Ellipse(hdc, c - BUTTON_RADIUS, c - BUTTON_RADIUS, c + BUTTON_RADIUS, c + BUTTON_RADIUS);
-                
+                let _ = Ellipse(
+                    hdc,
+                    c - BUTTON_RADIUS,
+                    c - BUTTON_RADIUS,
+                    c + BUTTON_RADIUS,
+                    c + BUTTON_RADIUS,
+                );
+
                 SelectObject(hdc, ob);
                 SelectObject(hdc, op);
                 let _ = DeleteObject(brush);
@@ -74,20 +85,20 @@ fn main() {
             }
             WM_LBUTTONDOWN => {
                 MOUSE_DOWN.store(true, Ordering::SeqCst);
-                
+
                 let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
                 START_CURSOR_X.store(pt.x, Ordering::SeqCst);
                 START_CURSOR_Y.store(pt.y, Ordering::SeqCst);
-                
+
                 let mut rect = RECT::default();
                 let _ = GetWindowRect(hwnd, &mut rect);
                 START_WIN_X.store(rect.left, Ordering::SeqCst);
                 START_WIN_Y.store(rect.top, Ordering::SeqCst);
-                
+
                 // Start timer to poll mouse position (16ms = ~60fps)
                 let _ = SetTimer(hwnd, DRAG_TIMER_ID, 16, None);
-                
+
                 LRESULT(0)
             }
             WM_TIMER => {
@@ -98,31 +109,43 @@ fn main() {
                         // Mouse button released - treat as mouse up
                         MOUSE_DOWN.store(false, Ordering::SeqCst);
                         let _ = KillTimer(hwnd, DRAG_TIMER_ID);
-                        
+
                         // Check for click
                         let mut pt = POINT::default();
                         let _ = GetCursorPos(&mut pt);
                         let dx = (pt.x - START_CURSOR_X.load(Ordering::SeqCst)).abs();
                         let dy = (pt.y - START_CURSOR_Y.load(Ordering::SeqCst)).abs();
-                        
+
                         if dx < 5 && dy < 5 {
                             let cur = STATE.load(Ordering::SeqCst);
                             let nxt = (cur + 1) % 3;
                             STATE.store(nxt, Ordering::SeqCst);
-                            println!("状态: {} -> {}", ["空闲","录音","处理"][cur as usize], ["空闲","录音","处理"][nxt as usize]);
+                            println!(
+                                "状态: {} -> {}",
+                                ["空闲", "录音", "处理"][cur as usize],
+                                ["空闲", "录音", "处理"][nxt as usize]
+                            );
                             let _ = InvalidateRect(hwnd, None, TRUE);
                         }
                     } else {
                         // Still dragging - update window position
                         let mut pt = POINT::default();
                         let _ = GetCursorPos(&mut pt);
-                        
+
                         let dx = pt.x - START_CURSOR_X.load(Ordering::SeqCst);
                         let dy = pt.y - START_CURSOR_Y.load(Ordering::SeqCst);
-                        
+
                         let new_x = START_WIN_X.load(Ordering::SeqCst) + dx;
                         let new_y = START_WIN_Y.load(Ordering::SeqCst) + dy;
-                        let _ = SetWindowPos(hwnd, HWND_TOPMOST, new_x, new_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+                        let _ = SetWindowPos(
+                            hwnd,
+                            HWND_TOPMOST,
+                            new_x,
+                            new_y,
+                            0,
+                            0,
+                            SWP_NOSIZE | SWP_NOZORDER,
+                        );
                     }
                 }
                 LRESULT(0)
@@ -131,24 +154,30 @@ fn main() {
                 if MOUSE_DOWN.load(Ordering::SeqCst) {
                     MOUSE_DOWN.store(false, Ordering::SeqCst);
                     let _ = KillTimer(hwnd, DRAG_TIMER_ID);
-                    
+
                     let mut pt = POINT::default();
                     let _ = GetCursorPos(&mut pt);
                     let dx = (pt.x - START_CURSOR_X.load(Ordering::SeqCst)).abs();
                     let dy = (pt.y - START_CURSOR_Y.load(Ordering::SeqCst)).abs();
-                    
+
                     if dx < 5 && dy < 5 {
                         let cur = STATE.load(Ordering::SeqCst);
                         let nxt = (cur + 1) % 3;
                         STATE.store(nxt, Ordering::SeqCst);
-                        println!("状态: {} -> {}", ["空闲","录音","处理"][cur as usize], ["空闲","录音","处理"][nxt as usize]);
+                        println!(
+                            "状态: {} -> {}",
+                            ["空闲", "录音", "处理"][cur as usize],
+                            ["空闲", "录音", "处理"][nxt as usize]
+                        );
                         let _ = InvalidateRect(hwnd, None, TRUE);
                     }
                 }
                 LRESULT(0)
             }
             WM_KEYDOWN => {
-                if wparam.0 == VK_ESCAPE { let _ = DestroyWindow(hwnd); }
+                if wparam.0 == VK_ESCAPE {
+                    let _ = DestroyWindow(hwnd);
+                }
                 LRESULT(0)
             }
             WM_DESTROY => {
@@ -156,25 +185,31 @@ fn main() {
                 PostQuitMessage(0);
                 LRESULT(0)
             }
-            _ => DefWindowProcW(hwnd, msg, wparam, lparam)
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
     }
 
     unsafe {
         let inst = match GetModuleHandleW(None) {
             Ok(h) => h,
-            Err(e) => { eprintln!("GetModuleHandleW failed: {:?}", e); return; }
+            Err(e) => {
+                eprintln!("GetModuleHandleW failed: {:?}", e);
+                return;
+            }
         };
         let cls = w!("FloatDemo2");
-        
+
         let cursor = match LoadCursorW(None, IDC_HAND) {
             Ok(c) => c,
             Err(_) => match LoadCursorW(None, IDC_ARROW) {
                 Ok(c) => c,
-                Err(e) => { eprintln!("LoadCursorW failed: {:?}", e); return; }
-            }
+                Err(e) => {
+                    eprintln!("LoadCursorW failed: {:?}", e);
+                    return;
+                }
+            },
         };
-        
+
         let wc = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             style: CS_HREDRAW | CS_VREDRAW,
@@ -188,11 +223,19 @@ fn main() {
 
         let hwnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-            cls, w!("Voice"), WS_POPUP | WS_VISIBLE,
-            100, 100, WINDOW_SIZE, WINDOW_SIZE,
-            HWND::default(), HMENU::default(), inst, None,
+            cls,
+            w!("Voice"),
+            WS_POPUP | WS_VISIBLE,
+            100,
+            100,
+            WINDOW_SIZE,
+            WINDOW_SIZE,
+            HWND::default(),
+            HMENU::default(),
+            inst,
+            None,
         );
-        
+
         if hwnd.0 == 0 {
             eprintln!("CreateWindowExW failed");
             return;

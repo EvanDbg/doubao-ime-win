@@ -24,7 +24,7 @@ impl OpusEncoder {
 
         let encoder = Encoder::new(sample_rate, channels_enum, Application::Audio)
             .map_err(|e| anyhow!("Failed to create Opus encoder: {:?}", e))?;
-        
+
         // Frame size for 20ms at the given sample rate
         let frame_size = (sample_rate * 20 / 1000) as usize;
 
@@ -59,10 +59,11 @@ impl OpusEncoder {
 
         // Encode to Opus
         let mut output = vec![0u8; 4000]; // Max Opus frame size
-        let encoded_len = self.encoder
+        let encoded_len = self
+            .encoder
             .encode(&samples[..expected_samples], &mut output)
             .map_err(|e| anyhow!("Opus encode error: {:?}", e))?;
-        
+
         output.truncate(encoded_len);
         Ok(output)
     }
