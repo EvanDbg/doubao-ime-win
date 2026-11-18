@@ -166,7 +166,7 @@ impl AsrClient {
                 frame_index += 1;
 
                 // Log every 50 frames (about 1 second)
-                if frame_index % 50 == 0 {
+                if frame_index.is_multiple_of(50) {
                     tracing::info!(
                         "Sent {} audio frames ({:.1}s)",
                         frame_index,

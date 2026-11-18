@@ -281,7 +281,7 @@ fn run_audio_capture(
                         if count == 0 {
                             println!("[Audio] First frame captured and encoded!");
                         }
-                        if count > 0 && count % 50 == 0 {
+                        if count > 0 && count.is_multiple_of(50) {
                             println!(
                                 "[AudioCapture] Frames: {} ({:.1}s)",
                                 count,

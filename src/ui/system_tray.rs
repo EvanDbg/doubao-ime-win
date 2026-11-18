@@ -162,7 +162,7 @@ pub async fn run_app(
                 running_clone.store(false, Ordering::SeqCst);
                 #[cfg(target_os = "windows")]
                 unsafe {
-                    windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                    let _ = windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
                         main_thread_id,
                         windows::Win32::UI::WindowsAndMessaging::WM_QUIT,
                         windows::Win32::Foundation::WPARAM(0),
@@ -210,7 +210,7 @@ pub async fn run_app(
                     running_clone.store(false, Ordering::SeqCst);
                     #[cfg(target_os = "windows")]
                     unsafe {
-                        windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                        let _ = windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
                             main_thread_id,
                             windows::Win32::UI::WindowsAndMessaging::WM_QUIT,
                             windows::Win32::Foundation::WPARAM(0),

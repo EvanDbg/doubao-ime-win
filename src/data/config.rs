@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Application configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub general: GeneralConfig,
@@ -20,18 +20,6 @@ pub struct AppConfig {
     pub asr: AsrConfig,
     #[serde(default)]
     pub ai: AiConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            hotkey: HotkeyConfig::default(),
-            floating_button: FloatingButtonConfig::default(),
-            asr: AsrConfig::default(),
-            ai: AiConfig::default(),
-        }
-    }
 }
 
 impl AppConfig {

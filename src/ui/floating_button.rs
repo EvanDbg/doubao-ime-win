@@ -458,3 +458,9 @@ impl FloatingButton {
         }
     }
 }
+
+impl Default for FloatingButton {
+    fn default() -> Self {
+        Self::new()
+    }
+}
