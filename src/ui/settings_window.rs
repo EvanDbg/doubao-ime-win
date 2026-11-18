@@ -26,11 +26,6 @@ mod windows_impl {
     const ID_PUNCTUATION_SMART: isize = 111;
     const ID_PUNCTUATION_SPACE: isize = 112;
     const ID_PUNCTUATION_FULL: isize = 113;
-    const ID_AI_ENABLED: isize = 103;
-    const ID_AI_ENDPOINT: isize = 104;
-    const ID_AI_MODEL: isize = 105;
-    const ID_AI_API_KEY: isize = 106;
-    const ID_ACCEPT_INVALID_CERTS: isize = 107;
     const ID_SAVE: isize = 108;
     const ID_EXIT: isize = 109;
     const ID_STATUS: isize = 110;
@@ -38,14 +33,11 @@ mod windows_impl {
     const COLOR_BACKGROUND: COLORREF = COLORREF(0x00000000);
     const COLOR_CARD: COLORREF = COLORREF(0x00222222);
     const COLOR_TEXT: COLORREF = COLORREF(0x00ffffff);
-    const COLOR_CHECK: COLORREF = COLORREF(0x003fc878);
-
     #[derive(Clone, Copy)]
     struct Theme {
         background: COLORREF,
         card: COLORREF,
         text: COLORREF,
-        check: COLORREF,
     }
 
     impl Theme {
@@ -53,14 +45,12 @@ mod windows_impl {
             background: COLOR_BACKGROUND,
             card: COLOR_CARD,
             text: COLOR_TEXT,
-            check: COLOR_CHECK,
         };
 
         const LIGHT: Self = Self {
             background: COLORREF(0x00f9fafb),
             card: COLORREF(0x00ffffff),
             text: COLORREF(0x00171717),
-            check: COLORREF(0x0010b981),
         };
     }
 
@@ -93,11 +83,6 @@ mod windows_impl {
         punctuation_smart: HWND,
         punctuation_space: HWND,
         punctuation_full: HWND,
-        ai_enabled: HWND,
-        ai_endpoint: HWND,
-        ai_model: HWND,
-        ai_api_key: HWND,
-        accept_invalid_certs: HWND,
         status: HWND,
     }
 
@@ -154,22 +139,6 @@ mod windows_impl {
             }),
             LPARAM(0),
         );
-    }
-
-    unsafe fn read_text(hwnd: HWND) -> String {
-        let length = SendMessageW(hwnd, WM_GETTEXTLENGTH, WPARAM(0), LPARAM(0)).0 as usize;
-        if length == 0 {
-            return String::new();
-        }
-        let mut buffer = vec![0u16; length + 1];
-        SendMessageW(
-            hwnd,
-            WM_GETTEXT,
-            WPARAM(length + 1),
-            LPARAM(buffer.as_mut_ptr() as isize),
-        );
-        let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
-        String::from_utf16_lossy(&buffer[..end])
     }
 
     unsafe fn set_text(hwnd: HWND, text: &str) {
@@ -413,36 +382,20 @@ mod windows_impl {
                 true,
             );
 
-            let ai_enabled = create_control(
-                hwnd,
-                button,
-                "启用 AI 后处理（兼容 OpenAI Chat API）",
-                BS_AUTOCHECKBOX,
-                24,
-                150,
-                472,
-                34,
-                ID_AI_ENABLED,
-                true,
-            );
+            let status = create_control(hwnd, label, "", 0, 24, 154, 472, 24, ID_STATUS, false);
 
             let ui = Ui {
                 settings,
                 punctuation_smart,
                 punctuation_space,
                 punctuation_full,
-                ai_enabled,
-                ai_endpoint: HWND::default(),
-                ai_model: HWND::default(),
-                ai_api_key: HWND::default(),
-                accept_invalid_certs: HWND::default(),
                 status,
             };
             CURRENT_UI.with(|cell| *cell.borrow_mut() = Some(ui));
             SETTINGS_OPEN.store(hwnd.0 as usize, Ordering::SeqCst);
 
             let _ = ShowWindow(hwnd, SW_SHOW);
-            let _ = SetFocus(endpoint);
+            let _ = SetFocus(punctuation_smart);
 
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
