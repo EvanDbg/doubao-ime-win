@@ -276,7 +276,7 @@ fn run_modifier_trigger_hook(
 
     // Thread-local state for hook callback
     thread_local! {
-        static HOOK_STATE: RefCell<Option<HookState>> = RefCell::new(None);
+        static HOOK_STATE: RefCell<Option<HookState>> = const { RefCell::new(None) };
     }
 
     struct HookState {
@@ -317,9 +317,9 @@ fn run_modifier_trigger_hook(
                     if hook_state.is_active.load(Ordering::SeqCst) {
                         let input = if hook_state.target_vks.contains(&vk_code) {
                             if is_key_down {
-                                Some(KeyInput::Press(kb_struct.vkCode as u32))
+                                Some(KeyInput::Press(kb_struct.vkCode))
                             } else if is_key_up {
-                                Some(KeyInput::Release(kb_struct.vkCode as u32))
+                                Some(KeyInput::Release(kb_struct.vkCode))
                             } else {
                                 None
                             }

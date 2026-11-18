@@ -16,16 +16,22 @@ use super::protocol::{
     build_finish_session, build_start_session, build_start_task, build_task_request,
     parse_response, AsrResponse, ResponseType, SessionConfig,
 };
+use crate::audio::AudioFrameEvent;
+use crate::data::{AsrConfig, PunctuationMode};
 
 /// ASR Client for real-time speech recognition
 pub struct AsrClient {
     credentials: DeviceCredentials,
+    asr_config: AsrConfig,
 }
 
 impl AsrClient {
     /// Create a new ASR client with credentials
-    pub fn new(credentials: DeviceCredentials) -> Self {
-        Self { credentials }
+    pub fn new(credentials: DeviceCredentials, asr_config: AsrConfig) -> Self {
+        Self {
+            credentials,
+            asr_config,
+        }
     }
 
     /// Get WebSocket URL with parameters
@@ -41,7 +47,7 @@ impl AsrClient {
     /// Returns a receiver for ASR responses
     pub async fn start_realtime(
         &self,
-        mut audio_rx: mpsc::Receiver<Vec<u8>>,
+        mut audio_rx: mpsc::Receiver<AudioFrameEvent>,
     ) -> Result<mpsc::Receiver<AsrResponse>> {
         let url = self.ws_url();
         let request_id = Uuid::new_v4().to_string();
@@ -58,7 +64,10 @@ impl AsrClient {
             .header("Connection", "Upgrade")
             .header("Upgrade", "websocket")
             .header("Sec-WebSocket-Version", "13")
-            .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
+            .header(
+                "Sec-WebSocket-Key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
             .body(())?;
 
         tracing::info!("Connecting to ASR WebSocket: {}", url);
@@ -89,7 +98,10 @@ impl AsrClient {
 
         // Send StartSession
         tracing::debug!("Sending StartSession");
-        let session_config = SessionConfig::new(&device_id);
+        let session_config = SessionConfig::new(
+            &device_id,
+            self.asr_config.punctuation_mode != PunctuationMode::Space,
+        );
         let start_session_msg = build_start_session(&request_id, &token, &session_config);
         write.send(Message::Binary(start_session_msg)).await?;
 
@@ -108,21 +120,43 @@ impl AsrClient {
             let mut frame_index = 0u64;
             let start_time = current_time_ms();
 
-            // Process audio frames until channel is closed
-            while let Some(opus_frame) = audio_rx.recv().await {
-                let frame_state = if frame_index == 0 {
-                    FrameState::First
-                } else {
-                    FrameState::Middle
+            // Process audio frames until channel is closed.
+            // Silence is gated before this task, so the ASR API only sees speech segments.
+            while let Some(event) = audio_rx.recv().await {
+                let (opus_frame, frame_state) = match event {
+                    AudioFrameEvent::Speech { started, frame } => {
+                        let frame_state = if started || frame_index == 0 {
+                            FrameState::First
+                        } else {
+                            FrameState::Middle
+                        };
+                        (frame, frame_state)
+                    }
+                    AudioFrameEvent::Silence => {
+                        let timestamp_ms = start_time + frame_index * FRAME_DURATION_MS as u64;
+                        let silent_frame = vec![0u8; 100];
+                        let msg = build_task_request(
+                            &request_id_clone,
+                            silent_frame,
+                            FrameState::Last,
+                            timestamp_ms,
+                        );
+
+                        if write.send(Message::Binary(msg)).await.is_ok() {
+                            let finish_msg = build_finish_session(&request_id_clone, &token_clone);
+                            let _ = write.send(Message::Binary(finish_msg)).await;
+                            tracing::info!(
+                                "Speech segment finished; sent {} audio frames",
+                                frame_index
+                            );
+                        }
+                        break;
+                    }
                 };
 
                 let timestamp_ms = start_time + frame_index * FRAME_DURATION_MS as u64;
-                let msg = build_task_request(
-                    &request_id_clone,
-                    opus_frame,
-                    frame_state,
-                    timestamp_ms,
-                );
+                let msg =
+                    build_task_request(&request_id_clone, opus_frame, frame_state, timestamp_ms);
 
                 if write.send(Message::Binary(msg)).await.is_err() {
                     tracing::warn!("Failed to send audio frame {}", frame_index);
@@ -130,31 +164,21 @@ impl AsrClient {
                 }
 
                 frame_index += 1;
-                
+
                 // Log every 50 frames (about 1 second)
-                if frame_index % 50 == 0 {
-                    tracing::info!("Sent {} audio frames ({:.1}s)", frame_index, frame_index as f64 * 0.02);
+                if frame_index.is_multiple_of(50) {
+                    tracing::info!(
+                        "Sent {} audio frames ({:.1}s)",
+                        frame_index,
+                        frame_index as f64 * 0.02
+                    );
                 }
             }
 
             tracing::info!("Audio channel closed, sent {} total frames", frame_index);
 
-            // Send last frame to signal end
-            if frame_index > 0 {
-                let timestamp_ms = start_time + frame_index * FRAME_DURATION_MS as u64;
-                let silent_frame = vec![0u8; 100];
-                let msg = build_task_request(
-                    &request_id_clone,
-                    silent_frame,
-                    FrameState::Last,
-                    timestamp_ms,
-                );
-                let _ = write.send(Message::Binary(msg)).await;
-
-                // Send FinishSession
-                let finish_msg = build_finish_session(&request_id_clone, &token_clone);
-                let _ = write.send(Message::Binary(finish_msg)).await;
-                tracing::info!("Sent FinishSession");
+            if frame_index == 0 {
+                tracing::info!("No speech was detected; no audio was sent to ASR");
             }
         });
 

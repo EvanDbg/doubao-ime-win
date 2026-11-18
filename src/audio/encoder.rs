@@ -24,7 +24,7 @@ impl OpusEncoder {
 
         let encoder = Encoder::new(sample_rate, channels_enum, Application::Audio)
             .map_err(|e| anyhow!("Failed to create Opus encoder: {:?}", e))?;
-        
+
         // Frame size for 20ms at the given sample rate
         let frame_size = (sample_rate * 20 / 1000) as usize;
 
@@ -42,9 +42,10 @@ impl OpusEncoder {
     /// Output: Opus-encoded frame
     pub fn encode(&mut self, pcm_data: &[u8]) -> Result<Vec<u8>> {
         // Convert bytes to i16 samples
-        let samples: Vec<i16> = pcm_data
-            .chunks_exact(2)
-            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+        let (byte_pairs, _) = pcm_data.as_chunks::<2>();
+        let samples: Vec<i16> = byte_pairs
+            .iter()
+            .map(|chunk| i16::from_le_bytes(*chunk))
             .collect();
 
         // Ensure we have the right number of samples
@@ -59,10 +60,11 @@ impl OpusEncoder {
 
         // Encode to Opus
         let mut output = vec![0u8; 4000]; // Max Opus frame size
-        let encoded_len = self.encoder
+        let encoded_len = self
+            .encoder
             .encode(&samples[..expected_samples], &mut output)
             .map_err(|e| anyhow!("Opus encode error: {:?}", e))?;
-        
+
         output.truncate(encoded_len);
         Ok(output)
     }

@@ -3,5 +3,5 @@
 mod capture;
 mod encoder;
 
-pub use capture::AudioCapture;
+pub use capture::{AudioCapture, AudioFrameEvent};
 pub use encoder::OpusEncoder;

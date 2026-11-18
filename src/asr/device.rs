@@ -245,10 +245,7 @@ pub async fn register_device(creds: &mut DeviceCredentials) -> Result<()> {
         .await?;
 
     if !response.status().is_success() {
-        return Err(anyhow!(
-            "Device registration failed: {}",
-            response.status()
-        ));
+        return Err(anyhow!("Device registration failed: {}", response.status()));
     }
 
     let result: DeviceRegisterResponse = response.json().await?;

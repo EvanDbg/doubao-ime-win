@@ -34,8 +34,8 @@ impl From<u8> for ButtonState {
 pub enum FloatingButtonEvent {
     /// User clicked the button to toggle recording
     ToggleRecording,
-    /// User requested to exit
-    Exit,
+    /// User requested to open settings
+    OpenSettings,
 }
 
 /// Floating button configuration
@@ -128,11 +128,10 @@ impl FloatingButton {
         use std::mem::size_of;
         use windows::core::w;
         use windows::Win32::Foundation::*;
-        
-        use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-        
-        use windows::Win32::UI::WindowsAndMessaging::*;
 
+        use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+
+        use windows::Win32::UI::WindowsAndMessaging::*;
 
         // Thread-local state
         static MOUSE_DOWN: AtomicBool = AtomicBool::new(false);
@@ -196,14 +195,9 @@ impl FloatingButton {
                 };
 
                 let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
-                if let Ok(hbmp) = CreateDIBSection(
-                    hdc_mem,
-                    &bmi,
-                    DIB_RGB_COLORS,
-                    &mut bits,
-                    None,
-                    0,
-                ) {
+                if let Ok(hbmp) =
+                    CreateDIBSection(hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
+                {
                     if !bits.is_null() {
                         let old_bmp = SelectObject(hdc_mem, hbmp);
 
@@ -221,7 +215,7 @@ impl FloatingButton {
                             let pg = ((g * a) / 255) as u8;
                             let pb = ((b * a) / 255) as u8;
 
-                            *pixel_data.add(idx) = pb;     // B
+                            *pixel_data.add(idx) = pb; // B
                             *pixel_data.add(idx + 1) = pg; // G
                             *pixel_data.add(idx + 2) = pr; // R
                             *pixel_data.add(idx + 3) = pixel[3]; // A
@@ -236,7 +230,10 @@ impl FloatingButton {
                             AlphaFormat: 1, // AC_SRC_ALPHA
                         };
 
-                        let size = SIZE { cx: img_w as i32, cy: img_h as i32 };
+                        let size = SIZE {
+                            cx: img_w as i32,
+                            cy: img_h as i32,
+                        };
                         let pt_src = POINT { x: 0, y: 0 };
 
                         // Update layered window
@@ -262,7 +259,12 @@ impl FloatingButton {
             }
         }
 
-        unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        unsafe extern "system" fn wnd_proc(
+            hwnd: HWND,
+            msg: u32,
+            wparam: WPARAM,
+            lparam: LPARAM,
+        ) -> LRESULT {
             use windows::Win32::Foundation::*;
             use windows::Win32::Graphics::Gdi::*;
             use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
@@ -288,7 +290,10 @@ impl FloatingButton {
                     let _ = BeginPaint(hwnd, &mut ps);
                     // Get current state and update layered window
                     let state_val = SHARED_STATE.with(|s| {
-                        s.borrow().as_ref().map(|st| st.load(Ordering::SeqCst)).unwrap_or(0)
+                        s.borrow()
+                            .as_ref()
+                            .map(|st| st.load(Ordering::SeqCst))
+                            .unwrap_or(0)
                     });
                     update_layered_icon(hwnd, state_val);
                     EndPaint(hwnd, &ps);
@@ -336,7 +341,15 @@ impl FloatingButton {
                             let dy = pt.y - START_CURSOR_Y.load(Ordering::SeqCst);
                             let new_x = START_WIN_X.load(Ordering::SeqCst) + dx;
                             let new_y = START_WIN_Y.load(Ordering::SeqCst) + dy;
-                            let _ = SetWindowPos(hwnd, HWND_TOPMOST, new_x, new_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+                            let _ = SetWindowPos(
+                                hwnd,
+                                HWND_TOPMOST,
+                                new_x,
+                                new_y,
+                                0,
+                                0,
+                                SWP_NOSIZE | SWP_NOZORDER,
+                            );
                         }
                     }
                     LRESULT(0)
@@ -362,23 +375,11 @@ impl FloatingButton {
                     LRESULT(0)
                 }
                 WM_RBUTTONUP => {
-                    // Right-click to show exit confirmation
-                    use windows::core::w;
-                    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_YESNO, MB_ICONQUESTION, IDYES};
-                    let result = MessageBoxW(
-                        hwnd,
-                        w!("确定要退出豆包语音输入吗？"),
-                        w!("退出确认"),
-                        MB_YESNO | MB_ICONQUESTION,
-                    );
-                    if result == IDYES {
-                        EVENT_SENDER.with(|s| {
-                            if let Some(ref tx) = *s.borrow() {
-                                let _ = tx.send(FloatingButtonEvent::Exit);
-                            }
-                        });
-                        let _ = DestroyWindow(hwnd);
-                    }
+                    EVENT_SENDER.with(|s| {
+                        if let Some(ref tx) = *s.borrow() {
+                            let _ = tx.send(FloatingButtonEvent::OpenSettings);
+                        }
+                    });
                     LRESULT(0)
                 }
                 WM_DESTROY => {
@@ -386,7 +387,7 @@ impl FloatingButton {
                     PostQuitMessage(0);
                     LRESULT(0)
                 }
-                _ => DefWindowProcW(hwnd, msg, wparam, lparam)
+                _ => DefWindowProcW(hwnd, msg, wparam, lparam),
             }
         }
 
@@ -400,9 +401,8 @@ impl FloatingButton {
             };
 
             let cls = w!("DoubaoFloatingButton");
-            let cursor = LoadCursorW(None, IDC_HAND).unwrap_or_else(|_| {
-                LoadCursorW(None, IDC_ARROW).unwrap_or_default()
-            });
+            let cursor = LoadCursorW(None, IDC_HAND)
+                .unwrap_or_else(|_| LoadCursorW(None, IDC_ARROW).unwrap_or_default());
 
             let wc = WNDCLASSEXW {
                 cbSize: size_of::<WNDCLASSEXW>() as u32,
@@ -456,5 +456,11 @@ impl FloatingButton {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
+    }
+}
+
+impl Default for FloatingButton {
+    fn default() -> Self {
+        Self::new()
     }
 }

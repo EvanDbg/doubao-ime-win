@@ -27,20 +27,20 @@ fn main() {
     println!();
     println!("[Devices] Enumerating ALL input devices:");
     let mut devices: Vec<_> = Vec::new();
-    
+
     match host.input_devices() {
         Ok(device_iter) => {
             for (i, device) in device_iter.enumerate() {
                 let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
                 println!("  [{}] {}", i, name);
-                
+
                 // Show supported configs
                 if let Ok(configs) = device.supported_input_configs() {
                     for config in configs.take(2) {
                         println!("      {:?}", config);
                     }
                 }
-                
+
                 devices.push(device);
             }
         }
@@ -137,7 +137,7 @@ fn main() {
 
     println!();
     let final_count = sample_count.load(Ordering::Relaxed);
-    
+
     if final_count > 0 {
         println!("[SUCCESS] Captured {} samples!", final_count);
         println!();

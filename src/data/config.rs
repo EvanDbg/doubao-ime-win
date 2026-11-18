@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Application configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub general: GeneralConfig,
@@ -18,17 +18,8 @@ pub struct AppConfig {
     pub floating_button: FloatingButtonConfig,
     #[serde(default)]
     pub asr: AsrConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            hotkey: HotkeyConfig::default(),
-            floating_button: FloatingButtonConfig::default(),
-            asr: AsrConfig::default(),
-        }
-    }
+    #[serde(default)]
+    pub ai: AiConfig,
 }
 
 impl AppConfig {
@@ -177,11 +168,85 @@ impl Default for FloatingButtonConfig {
 pub struct AsrConfig {
     #[serde(default = "default_true")]
     pub vad_enabled: bool,
+    #[serde(default = "default_true")]
+    pub caption_punctuation: bool,
+    #[serde(default = "default_true")]
+    pub sentence_punctuation: bool,
+    #[serde(default)]
+    pub punctuation_mode: PunctuationMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PunctuationMode {
+    #[default]
+    Smart,
+    Space,
+    Full,
 }
 
 impl Default for AsrConfig {
     fn default() -> Self {
-        Self { vad_enabled: true }
+        Self {
+            vad_enabled: true,
+            caption_punctuation: true,
+            sentence_punctuation: true,
+            punctuation_mode: PunctuationMode::Smart,
+        }
+    }
+}
+
+impl PunctuationMode {
+    pub fn from_legacy(caption: bool, sentence: bool) -> Self {
+        if caption {
+            Self::Smart
+        } else if sentence {
+            Self::Full
+        } else {
+            Self::Space
+        }
+    }
+}
+
+/// AI post-processing configuration for OpenAI-compatible APIs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_ai_endpoint")]
+    pub endpoint: String,
+    #[serde(default = "default_ai_model")]
+    pub model: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_ai_timeout")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_true")]
+    pub accept_invalid_certs: bool,
+}
+
+fn default_ai_endpoint() -> String {
+    "https://api.openai.com/v1/chat/completions".to_string()
+}
+
+fn default_ai_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
+fn default_ai_timeout() -> u64 {
+    8000
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: default_ai_endpoint(),
+            model: default_ai_model(),
+            api_key: String::new(),
+            timeout_ms: default_ai_timeout(),
+            accept_invalid_certs: false,
+        }
     }
 }
 

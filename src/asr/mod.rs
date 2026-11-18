@@ -9,7 +9,7 @@ mod protocol;
 
 pub use client::AsrClient;
 pub use constants::*;
-pub use device::{DeviceCredentials, register_device, get_asr_token};
+pub use device::{get_asr_token, register_device, DeviceCredentials};
 pub use protocol::{AsrResponse, ResponseType};
 
 // Include the generated protobuf code

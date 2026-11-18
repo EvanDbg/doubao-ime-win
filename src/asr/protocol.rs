@@ -77,14 +77,14 @@ pub struct SessionExtra {
 }
 
 impl SessionConfig {
-    pub fn new(device_id: &str) -> Self {
+    pub fn new(device_id: &str, enable_punctuation: bool) -> Self {
         Self {
             audio_info: AudioInfo {
                 channel: 1,
                 format: "speech_opus".to_string(),
                 sample_rate: 16000,
             },
-            enable_punctuation: true,
+            enable_punctuation,
             enable_speech_rejection: false,
             extra: SessionExtra {
                 app_name: "com.android.chrome".to_string(),
@@ -248,7 +248,11 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
     }
 
     // Check for VAD start
-    if extra.get("vad_start").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if extra
+        .get("vad_start")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         return AsrResponse {
             response_type: ResponseType::VadStart,
             vad_start: true,

@@ -27,3 +27,20 @@ position_y = 100
 [asr]
 # 是否启用 VAD (语音活动检测)
 vad_enabled = true
+# 字幕识别结果是否保留标点
+caption_punctuation = true
+# 整句最终结果是否保留标点
+sentence_punctuation = true
+
+[ai]
+# 启用识别结果的 AI 后处理
+enabled = true
+# OpenAI 兼容接口地址
+endpoint = "https://175.178.193.126:13065/v1/chat/completions"
+# 模型名称
+model = "qwen2.5-coder-32b-Instruct"
+# API Key（保留在本地配置文件中）
+api_key = "[REDACTED_SECRET]"
+# 请求超时时间（毫秒）
+timeout_ms = 8000
+accept_invalid_certs = false
