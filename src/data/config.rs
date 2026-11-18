@@ -184,6 +184,17 @@ pub struct AsrConfig {
     pub caption_punctuation: bool,
     #[serde(default = "default_true")]
     pub sentence_punctuation: bool,
+    #[serde(default)]
+    pub punctuation_mode: PunctuationMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PunctuationMode {
+    #[default]
+    Smart,
+    Space,
+    Full,
 }
 
 impl Default for AsrConfig {
@@ -192,6 +203,19 @@ impl Default for AsrConfig {
             vad_enabled: true,
             caption_punctuation: true,
             sentence_punctuation: true,
+            punctuation_mode: PunctuationMode::Smart,
+        }
+    }
+}
+
+impl PunctuationMode {
+    pub fn from_legacy(caption: bool, sentence: bool) -> Self {
+        if caption {
+            Self::Smart
+        } else if sentence {
+            Self::Full
+        } else {
+            Self::Space
         }
     }
 }

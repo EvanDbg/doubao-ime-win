@@ -5,6 +5,7 @@ mod credential;
 
 pub use config::{
     AiConfig, AppConfig, AsrConfig, FloatingButtonConfig, GeneralConfig, HotkeyConfig,
+    PunctuationMode,
 };
 pub use settings::RuntimeSettings;
 

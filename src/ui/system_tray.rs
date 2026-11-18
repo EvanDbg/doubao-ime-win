@@ -10,6 +10,8 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     TrayIconBuilder,
 };
+#[cfg(target_os = "windows")]
+use windows::Win32::System::Threading::GetCurrentThreadId;
 
 use crate::business::{HotkeyManager, VoiceController};
 use crate::data::RuntimeSettings;
@@ -151,6 +153,8 @@ pub async fn run_app(
     let vc_clone = voice_controller.clone();
     let state_setter_clone = button_state_setter.clone();
     let settings_clone = settings.clone();
+    #[cfg(target_os = "windows")]
+    let main_thread_id = unsafe { GetCurrentThreadId() };
 
     std::thread::spawn(move || {
         while running_clone.load(Ordering::SeqCst) {
@@ -158,7 +162,12 @@ pub async fn run_app(
                 running_clone.store(false, Ordering::SeqCst);
                 #[cfg(target_os = "windows")]
                 unsafe {
-                    windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
+                    windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                        main_thread_id,
+                        windows::Win32::UI::WindowsAndMessaging::WM_QUIT,
+                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
                 }
                 break;
             }
@@ -201,7 +210,12 @@ pub async fn run_app(
                     running_clone.store(false, Ordering::SeqCst);
                     #[cfg(target_os = "windows")]
                     unsafe {
-                        windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
+                        windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                            main_thread_id,
+                            windows::Win32::UI::WindowsAndMessaging::WM_QUIT,
+                            windows::Win32::Foundation::WPARAM(0),
+                            windows::Win32::Foundation::LPARAM(0),
+                        );
                     }
                 }
             }

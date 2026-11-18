@@ -10,21 +10,22 @@ mod windows_impl {
     use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::Graphics::Gdi::{
-        BeginPaint, CreateSolidBrush, EndPaint, GetStockObject, DEFAULT_GUI_FONT, HBRUSH,
-        PAINTSTRUCT,
+        BeginPaint, CreateSolidBrush, EndPaint, GetStockObject, SetBkColor, SetTextColor,
+        DEFAULT_GUI_FONT, HBRUSH, HDC, PAINTSTRUCT,
     };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
     use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     use crate::data::RuntimeSettings;
 
     const SETTINGS_CLASS: PCWSTR = w!("DoubaoVoiceSettings");
-    const SETTINGS_TITLE: PCWSTR = w!("豆包语音输入设置");
+    const SETTINGS_TITLE: PCWSTR = w!("标点设置");
 
-    const ID_CAPTION_PUNCTUATION: isize = 101;
-    const ID_SENTENCE_PUNCTUATION: isize = 102;
+    const ID_PUNCTUATION_SMART: isize = 111;
+    const ID_PUNCTUATION_SPACE: isize = 112;
+    const ID_PUNCTUATION_FULL: isize = 113;
     const ID_AI_ENABLED: isize = 103;
     const ID_AI_ENDPOINT: isize = 104;
     const ID_AI_MODEL: isize = 105;
@@ -34,10 +35,64 @@ mod windows_impl {
     const ID_EXIT: isize = 109;
     const ID_STATUS: isize = 110;
 
+    const COLOR_BACKGROUND: COLORREF = COLORREF(0x00000000);
+    const COLOR_CARD: COLORREF = COLORREF(0x00222222);
+    const COLOR_TEXT: COLORREF = COLORREF(0x00ffffff);
+    const COLOR_CHECK: COLORREF = COLORREF(0x003fc878);
+
+    #[derive(Clone, Copy)]
+    struct Theme {
+        background: COLORREF,
+        card: COLORREF,
+        text: COLORREF,
+        check: COLORREF,
+    }
+
+    impl Theme {
+        const DARK: Self = Self {
+            background: COLOR_BACKGROUND,
+            card: COLOR_CARD,
+            text: COLOR_TEXT,
+            check: COLOR_CHECK,
+        };
+
+        const LIGHT: Self = Self {
+            background: COLORREF(0x00f9fafb),
+            card: COLORREF(0x00ffffff),
+            text: COLORREF(0x00171717),
+            check: COLORREF(0x0010b981),
+        };
+    }
+
+    fn current_theme() -> Theme {
+        unsafe {
+            let mut value = [0u16; 32];
+            let mut size = u32::try_from(value.len() * 2).unwrap_or(0);
+            let status = RegGetValueW(
+                HKEY_CURRENT_USER,
+                w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+                w!("AppsUseLightTheme"),
+                RRF_RT_REG_SZ,
+                None,
+                Some(value.as_mut_ptr().cast()),
+                Some(&mut size),
+            );
+            if status.is_ok() {
+                let text = String::from_utf16_lossy(&value);
+                if text.trim_end_matches(char::from(0)).trim() == "0" {
+                    return Theme::DARK;
+                }
+            }
+        }
+        Theme::LIGHT
+    }
+
+    #[derive(Clone)]
     struct Ui {
         settings: Arc<RuntimeSettings>,
-        caption_punctuation: HWND,
-        sentence_punctuation: HWND,
+        punctuation_smart: HWND,
+        punctuation_space: HWND,
+        punctuation_full: HWND,
         ai_enabled: HWND,
         ai_endpoint: HWND,
         ai_model: HWND,
@@ -62,12 +117,15 @@ mod windows_impl {
         let existing = SETTINGS_OPEN.load(Ordering::SeqCst);
         if existing != 0 {
             unsafe {
-                let _ = SetForegroundWindow(HWND(existing as isize));
+                let existing_hwnd = HWND(existing as isize);
+                if IsWindow(existing_hwnd).as_bool() {
+                    let _ = SetForegroundWindow(existing_hwnd);
+                    return;
+                }
             }
-            return;
+            SETTINGS_OPEN.store(0, Ordering::SeqCst);
         }
 
-        SETTINGS_OPEN.store(unsafe { GetCurrentThreadId() } as usize, Ordering::SeqCst);
         std::thread::spawn(move || {
             if let Err(e) = run_window(settings) {
                 tracing::error!("Failed to open settings window: {:?}", e);
@@ -161,34 +219,43 @@ mod windows_impl {
 
     unsafe fn load_controls(ui: &Ui) {
         let config = ui.settings.get();
-        set_checked(ui.caption_punctuation, config.asr.caption_punctuation);
-        set_checked(ui.sentence_punctuation, config.asr.sentence_punctuation);
-        set_checked(ui.ai_enabled, config.ai.enabled);
-        set_text(ui.ai_endpoint, &config.ai.endpoint);
-        set_text(ui.ai_model, &config.ai.model);
-        set_text(ui.ai_api_key, &config.ai.api_key);
-        set_checked(ui.accept_invalid_certs, config.ai.accept_invalid_certs);
-        set_text(ui.status, "保存后会立即应用到下一次识别");
+        let mode = if config.asr.caption_punctuation && config.asr.sentence_punctuation {
+            config.asr.punctuation_mode
+        } else {
+            crate::data::PunctuationMode::from_legacy(
+                config.asr.caption_punctuation,
+                config.asr.sentence_punctuation,
+            )
+        };
+        set_checked(
+            ui.punctuation_smart,
+            mode == crate::data::PunctuationMode::Smart,
+        );
+        set_checked(
+            ui.punctuation_space,
+            mode == crate::data::PunctuationMode::Space,
+        );
+        set_checked(
+            ui.punctuation_full,
+            mode == crate::data::PunctuationMode::Full,
+        );
+        set_text(ui.status, "选择后立即保存");
     }
 
     unsafe fn save_controls(ui: &Ui) -> Result<()> {
         let mut config = ui.settings.get();
-        config.asr.caption_punctuation = is_checked(ui.caption_punctuation);
-        config.asr.sentence_punctuation = is_checked(ui.sentence_punctuation);
-        config.ai.enabled = is_checked(ui.ai_enabled);
-        config.ai.endpoint = read_text(ui.ai_endpoint).trim().to_string();
-        config.ai.model = read_text(ui.ai_model).trim().to_string();
-        config.ai.api_key = read_text(ui.ai_api_key).trim().to_string();
-        config.ai.accept_invalid_certs = is_checked(ui.accept_invalid_certs);
-
-        let needs_api_key = config.ai.enabled && config.ai.api_key.trim().is_empty();
-        ui.settings.update(config)?;
-        let status = if needs_api_key {
-            "设置已保存；AI 后处理需要填写 API Key"
+        let mode = if is_checked(ui.punctuation_smart) {
+            crate::data::PunctuationMode::Smart
+        } else if is_checked(ui.punctuation_space) {
+            crate::data::PunctuationMode::Space
         } else {
-            "设置已保存"
+            crate::data::PunctuationMode::Full
         };
-        set_text(ui.status, status);
+        config.asr.punctuation_mode = mode;
+        config.asr.caption_punctuation = mode != crate::data::PunctuationMode::Full;
+        config.asr.sentence_punctuation = mode != crate::data::PunctuationMode::Space;
+        ui.settings.update(config)?;
+        set_text(ui.status, "已保存");
         Ok(())
     }
 
@@ -202,6 +269,8 @@ mod windows_impl {
         const WM_COMMAND: u32 = 0x0111;
         const WM_DESTROY: u32 = 0x0002;
         const WM_PAINT: u32 = 0x000F;
+        const WM_CTLCOLOREDIT: u32 = 0x0133;
+        const WM_CTLCOLORSTATIC: u32 = 0x0138;
 
         match msg {
             WM_CREATE => {
@@ -218,17 +287,28 @@ mod windows_impl {
                 let _ = EndPaint(hwnd, &paint);
                 LRESULT(0)
             }
+            WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC => {
+                let hdc = HDC(wparam.0 as isize);
+                let theme = current_theme();
+                SetTextColor(hdc, theme.text);
+                SetBkColor(hdc, theme.card);
+                let brush = HBRUSH(CreateSolidBrush(theme.card).0);
+                LRESULT(brush.0 as isize)
+            }
             WM_COMMAND => {
                 let id = wparam.0 & 0xffff;
                 let ui = CURRENT_UI.with(|cell| {
                     let ui = cell.borrow();
-                    ui.as_ref().map(|ui| Ui {
-                        settings: ui.settings.clone(),
-                        ..*ui
-                    })
+                    ui.as_ref().cloned()
                 });
                 if let Some(ui) = ui {
                     match id as isize {
+                        ID_PUNCTUATION_SMART | ID_PUNCTUATION_SPACE | ID_PUNCTUATION_FULL => unsafe {
+                            let id = id as isize;
+                            set_checked(ui.punctuation_smart, id == ID_PUNCTUATION_SMART);
+                            set_checked(ui.punctuation_space, id == ID_PUNCTUATION_SPACE);
+                            set_checked(ui.punctuation_full, id == ID_PUNCTUATION_FULL);
+                        },
                         ID_SAVE => {
                             if let Err(e) = save_controls(&ui) {
                                 unsafe { set_text(ui.status, &format!("保存失败：{e}")) };
@@ -267,7 +347,7 @@ mod windows_impl {
                 lpfnWndProc: Some(wnd_proc),
                 hInstance: instance.into(),
                 hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-                hbrBackground: HBRUSH(CreateSolidBrush(COLORREF(0xf9fafb)).0),
+                hbrBackground: HBRUSH(CreateSolidBrush(current_theme().background).0),
                 lpszClassName: class_name,
                 ..Default::default()
             };
@@ -294,138 +374,72 @@ mod windows_impl {
             }
 
             let button = w!("BUTTON");
-            let edit = w!("EDIT");
             let label = w!("STATIC");
 
-            let caption = create_control(
+            let punctuation_smart = create_control(
                 hwnd,
                 button,
-                "字幕加标点（识别中文字）",
-                BS_AUTOCHECKBOX,
+                "智能添加标点",
+                BS_AUTORADIOBUTTON,
                 24,
                 20,
-                240,
-                26,
-                ID_CAPTION_PUNCTUATION,
+                472,
+                34,
+                ID_PUNCTUATION_SMART,
                 true,
             );
-            let sentence = create_control(
+            let punctuation_space = create_control(
                 hwnd,
                 button,
-                "整句加标点（最终插入文字）",
-                BS_AUTOCHECKBOX,
-                280,
-                20,
-                220,
-                26,
-                ID_SENTENCE_PUNCTUATION,
+                "空格代替标点",
+                BS_AUTORADIOBUTTON,
+                24,
+                64,
+                472,
+                34,
+                ID_PUNCTUATION_SPACE,
                 true,
             );
+            let punctuation_full = create_control(
+                hwnd,
+                button,
+                "添加完整标点",
+                BS_AUTORADIOBUTTON,
+                24,
+                108,
+                472,
+                34,
+                ID_PUNCTUATION_FULL,
+                true,
+            );
+
             let ai_enabled = create_control(
                 hwnd,
                 button,
                 "启用 AI 后处理（兼容 OpenAI Chat API）",
                 BS_AUTOCHECKBOX,
                 24,
-                64,
-                460,
-                26,
+                150,
+                472,
+                34,
                 ID_AI_ENABLED,
                 true,
             );
 
-            create_control(hwnd, label, "API 地址", 0, 24, 108, 80, 20, 0, false);
-            let endpoint = create_control(
-                hwnd,
-                edit,
-                "",
-                WS_BORDER.0 as i32 | ES_AUTOHSCROLL,
-                112,
-                104,
-                390,
-                26,
-                ID_AI_ENDPOINT,
-                true,
-            );
-
-            create_control(hwnd, label, "模型名称", 0, 24, 148, 80, 20, 0, false);
-            let model = create_control(
-                hwnd,
-                edit,
-                "",
-                WS_BORDER.0 as i32 | ES_AUTOHSCROLL,
-                112,
-                144,
-                390,
-                26,
-                ID_AI_MODEL,
-                true,
-            );
-
-            create_control(hwnd, label, "API Key", 0, 24, 188, 80, 20, 0, false);
-            let api_key = create_control(
-                hwnd,
-                edit,
-                "",
-                WS_BORDER.0 as i32 | ES_AUTOHSCROLL | ES_PASSWORD,
-                112,
-                184,
-                390,
-                26,
-                ID_AI_API_KEY,
-                true,
-            );
-
-            let accept_invalid_certs = create_control(
-                hwnd,
-                button,
-                "允许无效 HTTPS 证书（不推荐）",
-                BS_AUTOCHECKBOX,
-                24,
-                224,
-                460,
-                26,
-                ID_ACCEPT_INVALID_CERTS,
-                true,
-            );
-            let _save = create_control(
-                hwnd,
-                button,
-                "保存设置",
-                BS_PUSHBUTTON,
-                112,
-                262,
-                130,
-                32,
-                ID_SAVE,
-                true,
-            );
-            let _exit = create_control(
-                hwnd,
-                button,
-                "退出本输入法",
-                BS_PUSHBUTTON,
-                258,
-                262,
-                130,
-                32,
-                ID_EXIT,
-                true,
-            );
-            let status = create_control(hwnd, label, "", 0, 112, 308, 390, 24, ID_STATUS, false);
-
             let ui = Ui {
                 settings,
-                caption_punctuation: caption,
-                sentence_punctuation: sentence,
+                punctuation_smart,
+                punctuation_space,
+                punctuation_full,
                 ai_enabled,
-                ai_endpoint: endpoint,
-                ai_model: model,
-                ai_api_key: api_key,
-                accept_invalid_certs,
+                ai_endpoint: HWND::default(),
+                ai_model: HWND::default(),
+                ai_api_key: HWND::default(),
+                accept_invalid_certs: HWND::default(),
                 status,
             };
             CURRENT_UI.with(|cell| *cell.borrow_mut() = Some(ui));
+            SETTINGS_OPEN.store(hwnd.0 as usize, Ordering::SeqCst);
 
             let _ = ShowWindow(hwnd, SW_SHOW);
             let _ = SetFocus(endpoint);

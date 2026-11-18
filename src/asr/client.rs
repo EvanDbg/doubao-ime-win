@@ -17,7 +17,7 @@ use super::protocol::{
     parse_response, AsrResponse, ResponseType, SessionConfig,
 };
 use crate::audio::AudioFrameEvent;
-use crate::data::AsrConfig;
+use crate::data::{AsrConfig, PunctuationMode};
 
 /// ASR Client for real-time speech recognition
 pub struct AsrClient {
@@ -100,7 +100,7 @@ impl AsrClient {
         tracing::debug!("Sending StartSession");
         let session_config = SessionConfig::new(
             &device_id,
-            self.asr_config.caption_punctuation || self.asr_config.sentence_punctuation,
+            self.asr_config.punctuation_mode != PunctuationMode::Space,
         );
         let start_session_msg = build_start_session(&request_id, &token, &session_config);
         write.send(Message::Binary(start_session_msg)).await?;
