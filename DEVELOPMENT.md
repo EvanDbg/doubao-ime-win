@@ -313,4 +313,3 @@ CI 中 `v*` tag 会触发 Release。不要为了“部署最新版”而顺手�
 6. 已按规则备份并替换 `D:\P\doubao-voice-input\doubao-voice-input.exe`。
 7. 新进程已启动，且配置与凭据未被覆盖。
 8. 已报告实际观测结果；未验证项和失败原因明确列出。
-
