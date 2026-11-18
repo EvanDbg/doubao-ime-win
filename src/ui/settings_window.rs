@@ -12,6 +12,7 @@ mod windows_impl {
     use eframe::{NativeOptions, Storage};
     use windows::core::w;
     use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+    use winit::platform::windows::EventLoopBuilderExtWindows;
 
     use crate::data::{PunctuationMode, RuntimeSettings};
 
@@ -313,6 +314,10 @@ mod windows_impl {
                     .with_inner_size([420.0, 330.0])
                     .with_resizable(false),
                 vsync: true,
+                event_loop_builder: Some(Box::new(|builder| {
+                    #[cfg(target_os = "windows")]
+                    builder.with_any_thread(true);
+                })),
                 ..Default::default()
             };
             let result = eframe::run_native(

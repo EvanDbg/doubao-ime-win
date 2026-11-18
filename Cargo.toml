@@ -34,6 +34,7 @@ global-hotkey = "0.5"
 tray-icon = "0.14"
 eframe = "0.27"
 egui = "0.27"
+winit = "0.29"
 
 # Windows API
 [target.'cfg(windows)'.dependencies]

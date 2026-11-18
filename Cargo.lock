@@ -1209,6 +1209,7 @@ dependencies = [
  "tray-icon",
  "uuid",
  "windows 0.52.0",
+ "winit",
 ]
 
 [[package]]
