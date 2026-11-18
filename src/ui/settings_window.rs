@@ -379,7 +379,7 @@ mod windows_impl {
             let accept_invalid_certs = create_control(
                 hwnd,
                 button,
-                "允许自签名/无效 HTTPS 证书",
+                "允许无效 HTTPS 证书（不推荐）",
                 BS_AUTOCHECKBOX,
                 24,
                 224,

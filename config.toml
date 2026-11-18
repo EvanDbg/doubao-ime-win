@@ -43,3 +43,4 @@ model = "qwen2.5-coder-32b-Instruct"
 api_key = "[REDACTED_SECRET]"
 # 请求超时时间（毫秒）
 timeout_ms = 8000
+accept_invalid_certs = false

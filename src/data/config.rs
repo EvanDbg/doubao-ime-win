@@ -233,7 +233,7 @@ impl Default for AiConfig {
             model: default_ai_model(),
             api_key: String::new(),
             timeout_ms: default_ai_timeout(),
-            accept_invalid_certs: true,
+            accept_invalid_certs: false,
         }
     }
 }
