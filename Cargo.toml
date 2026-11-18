@@ -32,6 +32,8 @@ global-hotkey = "0.5"
 
 # System tray
 tray-icon = "0.14"
+eframe = "0.27"
+egui = "0.27"
 
 # Windows API
 [target.'cfg(windows)'.dependencies]
