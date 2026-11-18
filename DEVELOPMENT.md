@@ -4,11 +4,12 @@
 
 ## 1. 总则
 
-- 只做用户要求的变更；不修复无关问题，不重排无关代码。
+- 用户说“继续/继续修复/帮我修/自动处理/按规范来”时，默认授权完成当前任务的本地实现、验证、提交、推送、开 PR、CI 自审与可合并时的合并。助手应自主选择方案并继续推进，只在遇到明确阻断或需要用户做真机操作时停下。
+- 只做能直接支持当前用户目标的变更；不为“顺手改进”扩大范围，也不重排无关代码。纯文档、诊断或本地小任务不会被自动升级为代码交付或部署。
 - 保留工作区中用户已有的无关改动。提交前必须核对 `git status --porcelain` 和 `git diff --name-only`，只 stage 与本任务相关的文件。
-- 不直接推 `main`。所有代码变更都走 feature branch → Pull Request → CI → merge。
-- 版本号变更、tag、GitHub Release、对外发布公告必须先取得用户明确确认；修复 bug 不等于授权发布。
-- 涉及删除、覆盖、批量文件操作或非本仓库目录时，先说明目标路径和范围；优先备份，再做变更。
+- 不直接推 `main`。用户已授权的代码变更走 feature branch → Pull Request → CI → merge；文档任务也只是推送分支并开 PR，不替代用户做需要确认的发布动作。
+- 版本号变更、tag、GitHub Release、下载入口或对外发布公告必须先取得用户明确确认；修复 bug 不等于授权公开发布。
+- 固定目标路径的部署属于用户已授权的“重新构建/替换 D 盘 P 目录/重启”流程，不必每次重复询问。其他删除、覆盖、批量文件操作或非本仓库目录，先说明目标路径和范围；优先备份，再做变更。
 - 临时文件优先放在 `D:\T`，不要写入系统 TEMP 或仓库目录。
 - 涉及本机工具链、Python、ESP-IDF、pnpm、Gradle 等环境问题时，先查 `D:\env\DEPENDENCIES.md`。
 - 不得把 API Key、token、credentials、代理凭据或其他 secret 写进日志、Issue、PR、commit 或规范文档。
@@ -19,7 +20,8 @@
 
 - 新功能：`feature/<short-slug>`
 - 修复：`fix/<short-slug>`
-- 文档或工具链：`chore/<short-slug>`
+- 文档：`docs/<short-slug>`
+- 工具链与杂务：`chore/<short-slug>`
 
 示例：`feature/settings-window`、`fix/floating-button-focus`。
 
@@ -57,23 +59,34 @@ cargo build --release
 
 ### 自动提交、推送和开 PR
 
-验证通过后按以下顺序执行：
+验证通过后按以下顺序执行；已有本地 commit 时跳过 `git add`/`git commit`，已有远端分支时跳过 `git push`：
 
 ```powershell
 git switch -c <branch-name>
 git add -- <related-files>
 git commit -m "<type>: <short-summary>"
-git push -u origin <branch-name>
-gh pr create --base main --head <branch-name> --fill
+git push -u fork <branch-name>
+gh pr create --repo EvanDbg/doubao-ime-win --base main --head SsuJojo:<branch-name> --title "<type>: <short-summary>" --body-file <pr-body-file>
 ```
 
-PR 描述至少包含：
+`gh pr create` 没有独立的 `--from-fork` 参数；跨 fork 提 PR 时必须同时使用 `--repo EvanDbg/doubao-ime-win` 和 `--head SsuJojo:<branch-name>`。习惯单命令创建时可用 `--fill` 作为起点，但必须随即用 `gh pr edit` 补齐下列章节，不能把 `--fill` 当作完整描述：
 
-- 动机
-- 变更范围
-- 已执行的本地验证
-- Windows 真机验证结果（如适用）
-- 已知风险或未验证项
+PR 描述固定使用以下模板；没有内容时写“无”，不要留空章节：
+
+```markdown
+## 动机
+
+## 变更范围
+
+## 验证
+
+- 本地验证：
+- Windows 真机验证：
+
+## 风险与未验证项
+```
+
+涉及 hotkey、悬浮球、文本插入、录音或设置窗口时，“Windows 真机验证”必须写实际观测结果；若助手无法操作 GUI，则写具体未验证项并请用户代验。
 
 ### 审查与合并
 
@@ -84,27 +97,27 @@ PR 描述至少包含：
 - Windows API 调用使用 unsafe 边界清晰，错误能被记录或返回。
 - UI 行为不会抢走用户正在输入窗口的焦点。
 
-确认后等待并检查 CI：
+确认后优先等待并检查目标仓库上的 CI（PR head SHA 必须等于本地待合并 commit）。若本仓库没有 workflow 或 PR checks 一直不产生状态，助手必须记录“无可用 CI”，不能把缺少检查误报为“CI 全绿”：
 
 ```powershell
-gh pr checks <branch-name> --watch
-gh pr view <branch-name> --json state,mergeable,reviewDecision,statusCheckRollup
+gh pr checks <pr-number> --repo EvanDbg/doubao-ime-win --watch --fail-fast
+gh pr view <pr-number> --repo EvanDbg/doubao-ime-win --json state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,headRefOid
 ```
 
-CI 全部通过、PR 可合并且无冲突时，可以自动 squash merge：
+自动合并的前置条件全部满足时才可合并：PR 可合并、无冲突、无要求人工审查的 review gate、所有必需检查通过（若没有检查，则本地验证必须全部通过并在 PR 中说明“无可用 CI”）、head SHA 与本地一致。满足后自动 squash merge：
 
 ```powershell
-gh pr merge <pr-number> --squash --delete-branch
+gh pr merge <pr-number> --repo EvanDbg/doubao-ime-win --squash --delete-branch
 ```
 
-合并后同步本地：
+合并后同步本地；若 PR head 与当前分支不是同一 commit，先保存或提交本任务改动，再切换：
 
 ```powershell
 git switch main
 git pull --ff-only
 ```
 
-禁止使用 `--force` 合并、绕过冲突、跳过失败检查或直接推 `main`。如果分支保护要求人工审查，自动流程停在等待审查状态，并明确告诉用户。
+禁止使用 `--force` 合并、绕过冲突、跳过失败检查、自批准自己的 PR 或直接推 `main`。如果分支保护要求人工审查，自动流程停在等待审查状态，并明确告诉用户。
 
 ## 4. 构建与 `D:\P` 部署
 
@@ -196,9 +209,9 @@ Start-Process -FilePath $targetExe -WorkingDirectory $deployRoot -WindowStyle Hi
 
 ### 本地缺陷
 
-- 编译、clippy、test 失败时优先在本分支修复。
+- 编译、clippy、test 失败时优先在当前任务分支修复，修复后重新执行失败的验证。
 - 不要为了让 CI 通过而删除测试、降低断言或加无意义的 allow。
-- 能稳定复现的 bug 先加最小回归测试，再修实现。
+- 能稳定复现且现有测试框架能覆盖的 bug，先加最小回归测试，再修实现；纯文档缺陷直接修正文档并检查内部一致性。
 
 ### CI 失败
 
@@ -209,11 +222,11 @@ gh run list --branch main --limit 5
 gh run view <run-id> --log-failed
 ```
 
-如果失败只来自噪声、网络或 runner 抖动，可以重跑一次；连续两次同样失败必须当作真实问题分析。
+如果失败只来自噪声、网络或 runner 抖动，可以重跑一次；连续两次同样失败必须当作真实问题分析。没有 CI 可用时，以本地验证结果为准，并明确说明未运行远端检查。
 
 ### Bug Issue
 
-合并进 `main` 后仍可复现的回归，或用户明确要求登记的缺陷，创建 GitHub Issue：
+合并进 `main` 后仍可复现的回归，或用户明确要求“登记 Issue/发行 bug/记录问题”的缺陷，创建 GitHub Issue；日志中出现的普通错误不必自动开 Issue：
 
 ```powershell
 gh issue create --title "bug: <short-summary>" --body "<repro, expected, actual, commit, logs>"
@@ -287,11 +300,11 @@ Get-Content -LiteralPath 'D:\P\doubao-voice-input\logs\doubao-voice-input.log' -
 2. 再看配置加载和凭据初始化。
 3. 再看 ASR/AI 网络错误。
 4. 最后看 Win32 输入或 UI 错误。
-5. 不确定时保存完整日志到 `D:\T`，再让用户确认是否继续。
+5. 不确定时把相关日志片段保存到 `D:\T`，先自行继续分析；只有需要用户操作 GUI、提供凭据或做发布决定时才停下。
 
 ## 7. 自动发布边界
 
-以下动作永远不会自动执行，必须先取得用户明确确认：
+以下动作永远不会自动执行，必须先取得用户明确确认（即使用户说“全部自动”“一直继续”也一样）：
 
 - 修改 `Cargo.toml` 中的 `version`。
 - 创建或推送 `v*` tag。
@@ -303,13 +316,27 @@ CI 中 `v*` tag 会触发 Release。不要为了“部署最新版”而顺手�
 
 ## 8. 完成定义
 
-一个任务只有满足以下条件才算完成：
+助手必须先识别任务类型，再套用对应的完成定义。用户说“继续/按规范来/帮我修”时，由助手根据变更内容自行选择类型，不向用户追问类型。
 
-1. 相关文件已通过格式、clippy、测试和 release 构建。
-2. 已创建英文本地 commit；无关用户改动未被纳入。
-3. 已推送 feature branch 并开 PR 到 `main`。
-4. CI 通过并完成 squash merge；本地 `main` 已同步。
-5. 已从合并后的 `main` 重新构建。
-6. 已按规则备份并替换 `D:\P\doubao-voice-input\doubao-voice-input.exe`。
-7. 新进程已启动，且配置与凭据未被覆盖。
-8. 已报告实际观测结果；未验证项和失败原因明确列出。
+### A. 纯文档、诊断或纯本地任务
+
+1. 文档内部规则一致；Markdown、链接和受影响的 workflow YAML 已核对。
+2. 涉及 Rust 代码的任务已通过 `cargo fmt -- --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 和 `cargo build --release`；纯文档任务无需执行 Rust 构建。
+3. 已创建英文本地 commit；无关用户改动未被纳入。
+4. 已推送分支并开 PR 到 `main`；或用户明确只要本地改动时保留本地 commit。
+5. 已报告实际观测结果；未验证项和失败原因明确列出。
+6. 不自动替换 `D:\P` 的可执行文件，不修改版本号、不打 tag、不发 Release。
+
+### B. 默认代码任务（未明确说“只本地试试”）
+
+1. 满足 A 中适用的验证、commit、PR 和报告要求。
+2. PR 通过第 3 节的自审与合并前置条件后自动 squash merge；本地 `main` 已同步。
+3. 已从合并后的 `main` 重新构建。
+4. 按第 4 节备份并替换 `D:\P\doubao-voice-input\doubao-voice-input.exe`。
+5. 新进程已启动，配置与凭据未被覆盖；或替换失败时已从备份恢复并说明失败原因。
+6. 版本号、tag、Release 和公告仍需用户单独确认，不属于代码任务完成条件。
+
+### C. 用户明确只要本地验证、诊断或试运行的任务
+
+1. 完成请求的构建/运行/诊断并报告观测结果。
+2. 未经用户要求不创建 commit、不推送、不开 PR、不合并、不部署、不发 Release。
